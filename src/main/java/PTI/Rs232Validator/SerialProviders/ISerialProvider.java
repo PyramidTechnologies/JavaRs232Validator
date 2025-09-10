@@ -1,4 +1,4 @@
-﻿package PTI.Rs232Validator.SerialProviders;
+package PTI.Rs232Validator.SerialProviders;
 
 import java.util.List;
 
