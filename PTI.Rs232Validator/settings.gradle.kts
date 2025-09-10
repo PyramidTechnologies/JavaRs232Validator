@@ -1,0 +1,1 @@
+rootProject.name = "PTI.Rs232Validator"
