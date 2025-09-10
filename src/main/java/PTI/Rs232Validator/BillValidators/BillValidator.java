@@ -37,7 +37,7 @@ public class BillValidator {
 
     private static ILogger _logger = null;
     private static final Object _mutex = new Object();
-    private static final ISerialProvider _serialProvider = null;
+    private static ISerialProvider _serialProvider = null;
 
     private static final Queue<Supplier<Boolean>> _messageCallbacks = new LinkedList<Supplier<Boolean>>();
     private Supplier<Boolean> _lastMessageCallback;
