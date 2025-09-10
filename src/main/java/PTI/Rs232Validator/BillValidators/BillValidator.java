@@ -13,6 +13,7 @@ import PTI.Rs232Validator.Rs232Configuration;
 import PTI.Rs232Validator.Rs232Event;
 import PTI.Rs232Validator.Rs232State;
 import PTI.Rs232Validator.CustomEvent;
+import PTI.Rs232Validator.SerialProviders.ISerialProvider;
 import PTI.Rs232Validator.Utility.ByteExtensions;
 import PTI.Rs232Validator.Utility.StringExtensions;
 
@@ -36,6 +37,7 @@ public class BillValidator {
 
     private static ILogger _logger = null;
     private static final Object _mutex = new Object();
+    private static final ISerialProvider _serialProvider;
 
     private static final Queue<Supplier<Boolean>> _messageCallbacks = new LinkedList<Supplier<Boolean>>();
     private Supplier<Boolean> _lastMessageCallback;
@@ -53,9 +55,10 @@ public class BillValidator {
     private boolean _wasBarcodeDetectedReported;
     private static boolean _wasConnectionLostReported;
 
-    public BillValidator(ILogger logger, /*ISerialProvider serialProvider,*/ Rs232Configuration configuration) {
+    public BillValidator(ILogger logger, ISerialProvider serialProvider, Rs232Configuration configuration) {
         _logger = logger;
         Configuration = configuration;
+        _serialProvider = serialProvider;
     }
 
     public static CustomEvent OnCommunicationAttempted;
@@ -241,12 +244,21 @@ public class BillValidator {
 
 
     private static boolean TryOpenPort() {
-        return true;
+        if(_serialProvider.TryOpen()){
+            return true;
+        }
+
+        _logger.LogDebug("Failed to open the serial provider");
+        return false;
     }
 
 
     private static void ClosePort() {
-
+        try{
+            _serialProvider.Close();
+        } catch(Exception e){
+            _logger.LogError("Failed to close the serial provider: %s", e.getMessage());
+        }
     }
 
 
@@ -280,12 +292,12 @@ public class BillValidator {
         List<Byte> responsePayload = new LinkedList<Byte>();
         Duration backoffTime = Configuration.PollingPeriod;
         for(int i = 0; i< MaxReadAttempts; i++){
-            //_serialProvider.Write(requestPayload);
+            _serialProvider.Write(requestPayload);
 
-            //responsePayload = _serialProvider.Read(2);
+            responsePayload = _serialProvider.Read(2);
             if(responsePayload.size() == 2){
-                long remainingByteCount = (long)(responsePayload.get(1) - 2);
-                //responsePayload.addAll(_serialProvider.Read(remainingByteCount));
+                int remainingByteCount = (responsePayload.get(1) - 2);
+                responsePayload.addAll(_serialProvider.Read(remainingByteCount));
                 break;
 
 
@@ -293,6 +305,7 @@ public class BillValidator {
 
             try {
                 Thread.sleep(backoffTime.toMillis());
+                backoffTime = backoffTime.plusMillis(BackoffIncrement.toMillis());
             } catch (InterruptedException e) {
                 _logger.LogError(e.getMessage());
             }
