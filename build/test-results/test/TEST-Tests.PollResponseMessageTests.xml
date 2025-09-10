@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="Tests.PollResponseMessageTests" tests="25" skipped="0" failures="0" errors="0" timestamp="2025-09-10T14:28:56.580Z" hostname="ASSET-511" time="0.108">
+  <properties/>
+  <testcase name="PollResponseMessage_DeserializesModelNumberAndFirmwareRevision()" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[1] [2, 11, 33, 17, 16, 8, 0, 1, 2, 3, 32], 1" classname="Tests.PollResponseMessageTests" time="0.017"/>
+  <testcase name="[2] [2, 11, 33, 17, 16, 16, 0, 1, 2, 3, 56], 2" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[3] [2, 11, 33, 17, 16, 24, 0, 1, 2, 3, 48], 3" classname="Tests.PollResponseMessageTests" time="0.002"/>
+  <testcase name="[4] [2, 11, 33, 17, 16, 32, 0, 1, 2, 3, 8], 4" classname="Tests.PollResponseMessageTests" time="0.002"/>
+  <testcase name="[5] [2, 11, 33, 17, 16, 40, 0, 1, 2, 3, 0], 5" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[6] [2, 11, 33, 17, 16, 48, 0, 1, 2, 3, 24], 6" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[7] [2, 11, 33, 17, 16, 56, 0, 1, 2, 3, 16], 7" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[1] [2, 11, 33, 1, 0, 0, 0, 1, 2, 3, 40], false" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[2] [2, 11, 33, 1, 16, 0, 0, 1, 2, 3, 56], true" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[1] [2, 11, 33, 17, 16, 0, 0, 1, 2, 3, 40], Stacked" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[2] [2, 11, 33, 65, 16, 0, 0, 1, 2, 3, 120], Returned" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[3] [2, 11, 33, 1, 17, 0, 0, 1, 2, 3, 57], Cheated" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[4] [2, 11, 33, 1, 18, 0, 0, 1, 2, 3, 58], BillRejected" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[5] [2, 11, 33, 1, 16, 2, 0, 1, 2, 3, 58], InvalidCommand" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[6] [2, 11, 33, 1, 16, 1, 0, 1, 2, 3, 57], PowerUp" classname="Tests.PollResponseMessageTests" time="0.0"/>
+  <testcase name="[1] [2, 11, 33, 1, 16, 0, 0, 1, 2, 3, 56], Idling" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[2] [2, 11, 33, 2, 16, 0, 0, 1, 2, 3, 59], Accepting" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[3] [2, 11, 33, 4, 16, 0, 0, 1, 2, 3, 61], Escrowed" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[4] [2, 11, 33, 8, 16, 0, 0, 1, 2, 3, 49], Stacking" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[5] [2, 11, 33, 32, 16, 0, 0, 1, 2, 3, 25], Returning" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[6] [2, 11, 33, 0, 20, 0, 0, 1, 2, 3, 61], BillJammed" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[7] [2, 11, 33, 0, 24, 0, 0, 1, 2, 3, 49], StackerFull" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <testcase name="[8] [2, 11, 33, 0, 16, 4, 0, 1, 2, 3, 61], Failure" classname="Tests.PollResponseMessageTests" time="0.002"/>
+  <testcase name="PollResponseMessage_DeserializesMultipleStates()" classname="Tests.PollResponseMessageTests" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
