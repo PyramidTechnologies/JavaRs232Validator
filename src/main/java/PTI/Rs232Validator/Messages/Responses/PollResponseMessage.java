@@ -1,6 +1,7 @@
 package PTI.Rs232Validator.Messages.Responses;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 import PTI.Rs232Validator.Messages.Rs232MessageType;
 import PTI.Rs232Validator.Rs232Event;
@@ -68,7 +69,7 @@ public class PollResponseMessage extends Rs232ResponseMessage{
                 .stream()
                 .skip(3)
                 .limit(StatusByteSize)
-                .toList();
+                .collect(Collectors.toList());
         DeserializeStatus();
     }
 
@@ -168,7 +169,7 @@ public class PollResponseMessage extends Rs232ResponseMessage{
 
             List<Byte> setBitIndex = bitIndex.stream()
                                              .filter(n -> IsBitSet(Status.get(byteIndex.intValue()), n))
-                                             .toList();
+                                             .collect(Collectors.toList());
 
             if(setBitIndex.isEmpty()){
                 continue;

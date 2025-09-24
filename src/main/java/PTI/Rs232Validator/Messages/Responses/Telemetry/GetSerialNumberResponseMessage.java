@@ -36,7 +36,7 @@ public class GetSerialNumberResponseMessage extends TelemetryResponseMessage {
         SerialNumber = serialNumber;
     }
 
-    private String SerialNumber = "";
+    public String SerialNumber = "";
     public String getSerialNumber(){
         return SerialNumber;
     }

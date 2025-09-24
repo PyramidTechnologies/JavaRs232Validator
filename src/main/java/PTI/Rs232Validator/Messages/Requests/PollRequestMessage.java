@@ -43,27 +43,27 @@ public class PollRequestMessage extends Rs232RequestMessage{
 
     public PollRequestMessage SetEscrowRequested(boolean isEscrowRequested){
         IsEscrowRequested = isEscrowRequested;
-        MutatePayload((byte)4, isEscrowRequested ? ByteExtensions.SetBit(Payload.get().get(4), (byte) 4) : ByteExtensions.ClearBit(Payload.get().get(4), (byte) 4));
+        MutatePayload((byte)4, isEscrowRequested ? ByteExtensions.SetBit(getPayload().get(4), (byte) 4) : ByteExtensions.ClearBit(getPayload().get(4), (byte) 4));
         return this;
     }
 
 
     public PollRequestMessage SetStackRequested(boolean isStackRequested){
         IsStackRequested = isStackRequested;
-        MutatePayload((byte) 4, isStackRequested ? ByteExtensions.SetBit(Payload.get().get(4), (byte) 5) : ByteExtensions.ClearBit(Payload.get().get(4), (byte) 5));
+        MutatePayload((byte) 4, isStackRequested ? ByteExtensions.SetBit(getPayload().get(4), (byte) 5) : ByteExtensions.ClearBit(getPayload().get(4), (byte) 5));
         return this;
     }
 
     public PollRequestMessage SetReturnRequested(boolean isReturnRequested){
         IsReturnRequested = isReturnRequested;
-        MutatePayload((byte) 4, isReturnRequested ? ByteExtensions.SetBit(Payload.get().get(4), (byte) 6) : ByteExtensions.ClearBit(Payload.get().get(4), (byte) 6));
+        MutatePayload((byte) 4, isReturnRequested ? ByteExtensions.SetBit(getPayload().get(4), (byte) 6) : ByteExtensions.ClearBit(getPayload().get(4), (byte) 6));
         return this;
     }
 
 
     public PollRequestMessage SetBarcodeDetectionRequested(boolean isBarcodeDetectionRequested){
         IsBarcodeDetectionRequested = isBarcodeDetectionRequested;
-        MutatePayload((byte) 4, isBarcodeDetectionRequested ? ByteExtensions.SetBit(Payload.get().get(5), (byte) 1) : ByteExtensions.ClearBit(Payload.get().get(5), (byte) 1));
+        MutatePayload((byte) 4, isBarcodeDetectionRequested ? ByteExtensions.SetBit(getPayload().get(5), (byte) 1) : ByteExtensions.ClearBit(getPayload().get(5), (byte) 1));
         return this;
     }
 

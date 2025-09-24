@@ -1,7 +1,6 @@
 package PTI.Rs232Validator.Utility;
 
 import java.util.ArrayList;
-import java.util.HexFormat;
 import java.util.List;
 
 public class ByteExtensions {
@@ -71,14 +70,14 @@ public class ByteExtensions {
         if(bytes.isEmpty()){
             return "";
         }
-        HexFormat hexFormat = HexFormat.of();
+
         StringBuilder hexString = new StringBuilder(bytes.size() * 2);
         for(int i = 0; i < bytes.size(); i++){
             if(shouldIncludeHexPrefix && (shouldIncludeSpaces || i == 0)){
                 hexString.append("0x");
             }
 
-            hexString.append(hexFormat.toHexDigits(bytes.get(i)));
+            hexString.append(String.format("%02x",bytes.get(i)));
 
             if(shouldIncludeSpaces && i < bytes.size() - 1){
                 hexString.append(" ");

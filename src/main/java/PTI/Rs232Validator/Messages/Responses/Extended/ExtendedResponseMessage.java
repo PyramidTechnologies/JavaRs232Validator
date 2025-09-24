@@ -7,6 +7,7 @@ import PTI.Rs232Validator.Messages.Rs232MessageType;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class ExtendedResponseMessage extends PollResponseMessage {
 
@@ -35,7 +36,7 @@ public class ExtendedResponseMessage extends PollResponseMessage {
                 .stream()
                 .skip(10)
                 .limit(payload.size() - MinPayloadByteSize)
-                .toList();
+                .collect(Collectors.toList());
     }
 
     private ExtendedCommand Command;
@@ -59,6 +60,6 @@ public class ExtendedResponseMessage extends PollResponseMessage {
                 .stream()
                 .skip(4)
                 .limit(StatusByteSize)
-                .toList();
+                .collect(Collectors.toList());
     }
 }

@@ -19,9 +19,9 @@ public abstract class Rs232Message {
     protected List<Byte> Payload;
 
 
-    public final Supplier<Boolean> Ack = () -> Payload.size() >= 3 && IsBitSet(Payload.get(2), (byte) 0);
+    public final Supplier<Boolean> Ack = () -> getPayload().size() >= 3 && IsBitSet(getPayload().get(2), (byte) 0);
 
-    public final Supplier<Rs232MessageType> MessageType = () -> Payload.size() >= 3 ? Rs232MessageType.fromValue((byte) (Payload.get(2) & 0b11110000)) : Rs232MessageType.Unknown;
+    public final Supplier<Rs232MessageType> MessageType = () -> getPayload().size() >= 3 ? Rs232MessageType.fromValue((byte) (getPayload().get(2) & 0b11110000)) : Rs232MessageType.Unknown;
 
 
     public abstract List<Byte> getPayload();

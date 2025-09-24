@@ -35,4 +35,6 @@ public abstract class Rs232RequestMessage extends Rs232Message {
     public List<Byte> getPayload() {
         return Payload.get();
     }
+
+
 }

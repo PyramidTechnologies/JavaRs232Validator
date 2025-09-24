@@ -5,6 +5,7 @@ import PTI.Rs232Validator.Messages.Rs232MessageType;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 
 public class TelemetryResponseMessage extends Rs232ResponseMessage {
@@ -22,15 +23,14 @@ public class TelemetryResponseMessage extends Rs232ResponseMessage {
         }
 
         if(MessageType.get().getValue() != Rs232MessageType.TelemetryCommand.getValue()){
-            PayloadIssues.add(String.format("The message type is %s, but %s is expected",  MessageType, Rs232MessageType.TelemetryCommand));
+            PayloadIssues.add(String.format("The message type is %s, but %s is expected",  MessageType.get(), Rs232MessageType.TelemetryCommand));
             return;
         }
 
         Data = payload
                 .stream()
                 .skip(3)
-                .limit(payload.size() - MinPayloadByteSize)
-                .toList();
+                .limit(payload.size() - MinPayloadByteSize).collect(Collectors.toList());
     }
 
     protected List<Byte> Data = new ArrayList<Byte>();

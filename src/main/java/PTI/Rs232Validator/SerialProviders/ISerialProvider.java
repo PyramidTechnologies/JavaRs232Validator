@@ -1,19 +1,14 @@
 package PTI.Rs232Validator.SerialProviders;
 
-import java.util.List;
-
 public interface ISerialProvider {
 
-    boolean IsOpen = false;
+    boolean IsOpen();
 
     boolean TryOpen();
 
-
     void Close();
 
+    byte[] Read(long count);
 
-    List<Byte> Read(int count);
-
-
-    void Write(List<Byte> data);
+    void Write(byte[] data);
 }
