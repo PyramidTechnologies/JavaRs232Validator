@@ -5,35 +5,37 @@ import PTI.Rs232Validator.Loggers.LogLevel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
-class Logger : ILogger{
-    private var TimestampFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("MM-dd-yyyy HH:mm:ss a")
+class Logger : ILogger {
+    private val TimestampFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("MM-dd-yyyy hh:mm:ss a")
 
     override fun LogTrace(format: String, vararg args: Any?) {
-        Log(LogLevel.Trace, format, args)
+        Log(LogLevel.Trace, format, *args)
     }
 
     override fun LogDebug(format: String, vararg args: Any?) {
-        Log(LogLevel.Debug, format, args)
+        Log(LogLevel.Debug, format, *args)
     }
 
     override fun LogInfo(format: String, vararg args: Any?) {
-        Log(LogLevel.Info, format, args)
+        Log(LogLevel.Info, format, *args)
     }
 
     override fun LogError(format: String, vararg args: Any?) {
-        Log(LogLevel.Error, format, args)
+        Log(LogLevel.Error, format, *args)
     }
-    
+
     private fun Log(level: LogLevel, format: String, vararg args: Any?) {
         val entry = LogEntry(
             level,
             LocalDateTime.now().format(TimestampFormat),
-            String.format(format, args)
+            String.format(format, *args)
         )
-        _LogEntries.value = _LogEntries.value + entry
+
+        _LogEntries.update { it + entry }
     }
 
     private val _LogEntries = MutableStateFlow<List<LogEntry>>(emptyList())

@@ -73,8 +73,8 @@ public class Rs232Event {
     }
 
     /**
-     * Returns a String representation of all of the set flags
-     * @return A String representation of all of the set flags
+     * Returns a String representation of all the set flags
+     * @return A String representation of all the set flags
      */
     public String Flags(){
         List<String> setFlag = new ArrayList<>();

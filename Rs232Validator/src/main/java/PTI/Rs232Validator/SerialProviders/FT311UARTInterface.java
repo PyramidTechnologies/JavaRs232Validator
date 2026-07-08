@@ -14,8 +14,6 @@ import android.widget.Toast;
 
 import java.io.*;
 
-import PTI.Rs232Validator.Loggers.ILogger;
-
 
 /**
  * An implementation of {@link ISerialProvider} that connects to the FTDI Chip
@@ -53,24 +51,15 @@ public class FT311UARTInterface extends Activity implements ISerialProvider
 	public static String ModelString2 = "mModel=Android Accessory FT312D";
 	public static String VersionString = "mVersion=1.0";
 
-	public SharedPreferences intsharePrefSettings;
-
-	public ILogger _logger;
-
 	/**
 	 * Initializes a new instance of {@link FT311UARTInterface}
 	 * @param context The global context of the Android App
-	 * @param sharePrefSettings The app's shared preferences
-	 * @param logger {@link ILogger}
-	 * @param permissionString The usb permission string
 	 */
 	@SuppressLint({"UnspecifiedRegisterReceiverFlag", "UnspecifiedImmutableFlag"})
-	public FT311UARTInterface(Context context, SharedPreferences sharePrefSettings, ILogger logger, String permissionString){
+	public FT311UARTInterface(Context context){
 		super();
 		global_context = context;
-		intsharePrefSettings = sharePrefSettings;
-		_logger = logger;
-		ACTION_USB_PERMISSION = permissionString;
+		ACTION_USB_PERMISSION = context.getPackageName() + ".USB.PERMISSION";
 		/*shall we start a thread here or what*/
 		usbdata = new byte[1024];
 		writeusbdata = new byte[256];
@@ -98,6 +87,9 @@ public class FT311UARTInterface extends Activity implements ISerialProvider
 		} else {
 			context.registerReceiver(mUsbReceiver, filter);
 		}
+
+		inputstream = null;
+		outputstream = null;
 	}
 
 	/**
@@ -126,20 +118,22 @@ public class FT311UARTInterface extends Activity implements ISerialProvider
 		SendPacket((int)8);
 	}
 
-
-	private byte ReadData(int numBytes, byte[] buffer, int[] actualNumBytes) {
+	@Override
+	public byte Read(int numBytes, byte[] buffer, int[] actualNumBytes) {
 		status = 0x00;
 
-		while ((numBytes < 1) || (totalBytes == 0)) {
-			Thread.currentThread().interrupt();
+		if ((numBytes < 1) || (totalBytes == 0)) {
 			actualNumBytes[0] = 0;
 			status = 0x01;
 			return status;
 		}
+
 		if (numBytes > totalBytes)
 			numBytes = totalBytes;
+
 		totalBytes -= numBytes;
 		actualNumBytes[0] = numBytes;
+
 		for (int count = 0; count < numBytes; count++) {
 			buffer[count] = readBuffer[readIndex];
 			readIndex++;
@@ -173,46 +167,54 @@ public class FT311UARTInterface extends Activity implements ISerialProvider
 		}
 
 		UsbAccessory[] accessories = usbmanager.getAccessoryList();
-		UsbAccessory accessory = (accessories != null && accessories.length > 0) ? accessories[0] : null;
-		if(accessory == null)
+		if(accessories != null)
 		{
+			Toast.makeText(global_context, "Accessory Attached", Toast.LENGTH_SHORT).show();
+		}
+		else
+		{
+			// return 2 for accessory detached case
+			//Log.e(">>@@","ResumeAccessory RETURN 2 (accessories == null)");
 			accessory_attached = false;
 			return 2;
 		}
 
-		Toast.makeText(global_context, "Accessory Attached", Toast.LENGTH_SHORT).show();
+		UsbAccessory accessory = (accessories == null ? null : accessories[0]);
+		if (accessory != null) {
+			if( -1 == accessory.toString().indexOf(ManufacturerString))
+			{
+				Toast.makeText(global_context, "Manufacturer is not matched!", Toast.LENGTH_SHORT).show();
+				return 1;
+			}
 
+			if( -1 == accessory.toString().indexOf(ModelString1) && -1 == accessory.toString().indexOf(ModelString2))
+			{
+				Toast.makeText(global_context, "Model is not matched!", Toast.LENGTH_SHORT).show();
+				return 1;
+			}
 
-		if( -1 == accessory.toString().indexOf(ManufacturerString))
-		{
-			Toast.makeText(global_context, "Manufacturer is not matched!", Toast.LENGTH_SHORT).show();
-			return 1;
-		}
+			if( -1 == accessory.toString().indexOf(VersionString))
+			{
+				Toast.makeText(global_context, "Version is not matched!", Toast.LENGTH_SHORT).show();
+				return 1;
+			}
 
-		if( -1 == accessory.toString().indexOf(ModelString1) && -1 == accessory.toString().indexOf(ModelString2))
-		{
-			Toast.makeText(global_context, "Model is not matched!", Toast.LENGTH_SHORT).show();
-			return 1;
-		}
+			Toast.makeText(global_context, "Manufacturer, Model & Version are matched!", Toast.LENGTH_SHORT).show();
+			accessory_attached = true;
 
-		if( -1 == accessory.toString().indexOf(VersionString))
-		{
-			Toast.makeText(global_context, "Version is not matched!", Toast.LENGTH_SHORT).show();
-			return 1;
-		}
-
-		Toast.makeText(global_context, "Manufacturer, Model & Version are matched!", Toast.LENGTH_SHORT).show();
-		accessory_attached = true;
-
-		if (usbmanager.hasPermission(accessory)) {
-			OpenAccessory(accessory);
-		}
-		else
-		{
-			if (!mPermissionRequestPending) {
-				Toast.makeText(global_context, "Request USB Permission", Toast.LENGTH_SHORT).show();
-				usbmanager.requestPermission(accessory, mPermissionIntent);
-				mPermissionRequestPending = true;
+			if (usbmanager.hasPermission(accessory)) {
+				OpenAccessory(accessory);
+			}
+			else
+			{
+				synchronized (mUsbReceiver) {
+					if (!mPermissionRequestPending) {
+						Toast.makeText(global_context, "Request USB Permission", Toast.LENGTH_SHORT).show();
+						usbmanager.requestPermission(accessory,
+								mPermissionIntent);
+						mPermissionRequestPending = true;
+					}
+				}
 			}
 		}
 
@@ -228,6 +230,8 @@ public class FT311UARTInterface extends Activity implements ISerialProvider
 	private void DestroyAccessory(boolean bConfiged){
 		if(true == bConfiged){
 			READ_ENABLE = false;  // set false condition for handler_thread to exit waiting data loop
+			writeusbdata[0] = 0;
+			SendPacket(1);
 		}
 		else
 		{
@@ -236,10 +240,8 @@ public class FT311UARTInterface extends Activity implements ISerialProvider
 			catch(Exception e){}
 
 			READ_ENABLE = false;  // set false condition for handler_thread to exit waiting data loop
-			if(true == accessory_attached)
-			{
-				saveDefaultPreference();
-			}
+			writeusbdata[0] = 0;  // send dummy data for instream.read going
+			SendPacket(1);
 		}
 
 		try{Thread.sleep(10);}
@@ -298,26 +300,6 @@ public class FT311UARTInterface extends Activity implements ISerialProvider
 		System.exit(0);
 	}
 
-	protected void saveDetachPreference() {
-		if(intsharePrefSettings != null)
-		{
-			intsharePrefSettings.edit()
-					.putString("configed", "FALSE")
-					.commit();
-		}
-	}
-
-	protected void saveDefaultPreference() {
-		if(intsharePrefSettings != null)
-		{
-			intsharePrefSettings.edit().putString("configed", "TRUE").commit();
-			intsharePrefSettings.edit().putInt("baudRate", 9600).commit();
-			intsharePrefSettings.edit().putInt("stopBit", 1).commit();
-			intsharePrefSettings.edit().putInt("dataBit", 7).commit();
-			intsharePrefSettings.edit().putInt("parity", 2).commit();
-			intsharePrefSettings.edit().putInt("flowControl", 0).commit();
-		}
-	}
 
 	/***********USB broadcast receiver*******************************************/
 	private final BroadcastReceiver mUsbReceiver = new BroadcastReceiver()
@@ -339,9 +321,7 @@ public class FT311UARTInterface extends Activity implements ISerialProvider
 					if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false))
 					{
 						Toast.makeText(global_context, "Allow USB Permission", Toast.LENGTH_SHORT).show();
-						if(accessory != null){
-							OpenAccessory(accessory);
-						}
+						OpenAccessory(accessory);
 					}
 					else
 					{
@@ -353,19 +333,7 @@ public class FT311UARTInterface extends Activity implements ISerialProvider
 			}
 			else if (UsbManager.ACTION_USB_ACCESSORY_DETACHED.equals(action))
 			{
-				saveDetachPreference();
 				DestroyAccessory(true);
-				//CloseAccessory();
-			}
-			else if (UsbManager.ACTION_USB_ACCESSORY_ATTACHED.equals(action)){
-				UsbAccessory accessory = intent.getParcelableExtra(UsbManager.EXTRA_ACCESSORY);
-				if(accessory != null){
-					if(usbmanager.hasPermission(accessory)){
-						OpenAccessory(accessory);
-					} else {
-						usbmanager.requestPermission(accessory, mPermissionIntent);
-					}
-				}
 			}
 			else
 			{
@@ -373,28 +341,6 @@ public class FT311UARTInterface extends Activity implements ISerialProvider
 			}
 		}
 	};
-
-	/**
-	 * {@inheritDoc}
-	 */
-	@Override
-	public byte[] Read(long l) {
-		status = 0x01;
-		int[] actualNumBytes = new int[1];
-		int attemtps = 0;
-		while (status != 0x00 && attemtps < 4) {
-			try {
-				Thread.sleep(50);
-			} catch (InterruptedException e) {}
-			status = ReadData((int) l, readBuffer, actualNumBytes);
-			attemtps++;
-		}
-		byte[] buffer = new byte[actualNumBytes[0]];
-		for(int i=0; i<actualNumBytes[0]; i++) {
-			buffer[i] = readBuffer[i];
-		}
-		return buffer;
-	}
 
 	/**
 	 * {@inheritDoc}
@@ -474,7 +420,6 @@ public class FT311UARTInterface extends Activity implements ISerialProvider
 					}
 				} catch (Exception e) {
 					e.printStackTrace();
-					_logger.LogError(e.getMessage());
 				}
 			}
 		}

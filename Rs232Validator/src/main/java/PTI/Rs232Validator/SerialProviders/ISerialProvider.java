@@ -16,6 +16,8 @@ public interface ISerialProvider{
     void SetConfig(int baud, byte dataBits, byte stopBits,
                    byte parity, byte flowControl);
 
+
+
     /**
      * Resumes the connection after app resumes from pause or is re-opened
      */
@@ -25,11 +27,10 @@ public interface ISerialProvider{
 
     /**
      * Reads data from the external device
-     * @param count The count of bytes to read
      * @return If successful, an array with the requested count of bytes;
      * otherwise, an array with less then the requested count of bytes.
      */
-    byte[] Read(long count);
+    byte Read(int numBytes, byte[] buffer, int[] actualNumBytes);
 
     /**
      * Writes data to the external device

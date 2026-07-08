@@ -3,6 +3,7 @@ package PTI.Rs232Validator.BillValidators;
 import static PTI.Rs232Validator.Utility.ByteUtils.convertByteArrayToList;
 import static PTI.Rs232Validator.Utility.ByteUtils.convertListToByteArray;
 
+import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
 
@@ -35,7 +36,7 @@ import java.util.function.Supplier;
 /**
 * A hardware connection to a bill acceptor.
 */
-public class BillValidator {
+public class BillValidator extends Activity {
 
     private static final byte SuccessfulPollsRequiredToStartPollingLoop = 2;
     private static final byte MaxReadAttempts = 4;
@@ -53,11 +54,13 @@ public class BillValidator {
     public ISerialProvider _serialProvider;
 
     private static final Queue<Supplier<Boolean>> _messageCallbacks = new LinkedList<Supplier<Boolean>>();
+    private static final Queue<CompletableFuture> _futureCallbacks = new LinkedList<>();
     private Supplier<Boolean> _lastMessageCallback;
 
     private CompletableFuture<Void> _worker = CompletableFuture.completedFuture(null);
     private final ExecutorService _executor = Executors.newSingleThreadExecutor();
-    private static boolean _isPolling;
+    private PollingThread _pollingThread = new PollingThread(this::LoopPollMessages);
+    public boolean _isPolling;
     private static boolean _lastAck;
     private Rs232State _state;
     private boolean _shouldRequestBillStack;
@@ -72,6 +75,8 @@ public class BillValidator {
     * Initializes a new instance of {@link BillValidator} with a provided serial connection
     */
     public BillValidator(ILogger logger, ISerialProvider serialProvider, Rs232Configuration configuration) {
+        super();
+
         _logger = logger;
         Configuration = configuration;
         _serialProvider = serialProvider;
@@ -81,9 +86,19 @@ public class BillValidator {
      * Initializes a new instance of {@link BillValidator} without a pre-existing serial connection
      */
     public BillValidator(ILogger logger, Rs232Configuration configuration, Context context, SharedPreferences sharePrefSettings, String permissionString) {
+        super();
+
         _logger = logger;
         Configuration = configuration;
-        _serialProvider = new FT311UARTInterface(context, sharePrefSettings, logger, permissionString);
+        _serialProvider = new FT311UARTInterface(context);
+
+    }
+
+    /**
+     * Initializes an empty instance of {@link BillValidator} without a pre-existing serial connection
+     */
+    public BillValidator() {
+        super();
     }
 
     /**
@@ -145,24 +160,8 @@ public class BillValidator {
      * Starts the RS-232 polling loop
      * @return True if the polling loop starts; otherwise, false
      */
-    public boolean StartPollingLoop() {
-        synchronized (_mutex) {
-            if (_isPolling) {
-                _logger.LogDebug("The polling loop is running, so ignoring the start request");
-            }
-        }
-
-        /*if(!CheckForDevice()){
-            return false;
-        }*/
-
-        synchronized (_mutex) {
-            _isPolling = true;
-        }
-
-        _worker = CompletableFuture.runAsync(this::LoopPollMessages, _executor);
-        IsConnectionPresent = true;
-        return true;
+    public void StartPollingLoop() {
+        _pollingThread.start();
     }
 
     /**
@@ -196,7 +195,7 @@ public class BillValidator {
         _wasCashboxRemovalReported = false;
         _wasConnectionLostReported = false;
         IsConnectionPresent = false;
-
+        _pollingThread = new PollingThread(this::LoopPollMessages);
     }
 
     /**
@@ -237,38 +236,25 @@ public class BillValidator {
             Function<Boolean, Rs232RequestMessage> createRequestMessage,
             Function<List<Byte>, TResponseMessage> createResponseMessage) {
 
-        CountDownLatch latch = new CountDownLatch(1);
-        AtomicInteger incorrectPayloadCount = new AtomicInteger();
-
-        Mutable<TResponseMessage> responseMessageMutable = new Mutable<TResponseMessage>();
-
-        responseMessageMutable.value = (TResponseMessage) createResponseMessage.apply(new ArrayList<Byte>());
+        CompletableFuture<TResponseMessage> future = new CompletableFuture<>();
+        Mutable<TResponseMessage> responseMessageMutable = new Mutable<>();
 
         Supplier<Boolean> messageCallback = () -> {
-            MessageRetrievalResult messageRetrievalResult = null;
-            messageRetrievalResult = TrySendMessage(createRequestMessage, createResponseMessage, responseMessageMutable);
+            MessageRetrievalResult messageRetrievalResult = TrySendMessage(createRequestMessage, createResponseMessage, responseMessageMutable);
 
-            TResponseMessage responseMessage = responseMessageMutable.value;
-
-            if (messageRetrievalResult == null) {
-                return null;
+            if (messageRetrievalResult == MessageRetrievalResult.Success) {
+                future.complete(responseMessageMutable.value);
+                return true;
             }
 
-            switch (messageRetrievalResult) {
-                case IncorrectPayload:
-                    if (incorrectPayloadCount.incrementAndGet() <= MaxIncorrectPayloadPardons) {
-                        return false;
-                    }
-                case IncorrectAck:
-                    return false;
+            // For recoverable errors, we can retry. For others, we complete exceptionally.
+            if (messageRetrievalResult == MessageRetrievalResult.Timeout) {
+                // Instead of throwing, complete with a default/empty response
+                future.complete(createResponseMessage.apply(new ArrayList<>()));
+                return true; // Don't retry on timeout
             }
 
-            if (messageRetrievalResult.getValue() == MessageRetrievalResult.IncorrectPayload.getValue()) {
-                LogPayloadIssues(responseMessage);
-            }
-
-            latch.countDown();
-            return true;
+            return false; // Retry on incorrect ACK or payload
         };
 
         boolean isPolling;
@@ -277,35 +263,22 @@ public class BillValidator {
         }
 
         if (isPolling) {
-            EnqueueMessageCallback(messageCallback);
-            return CompletableFuture.supplyAsync(() -> {
-                try {
-                    latch.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    throw new RuntimeException(e);
-                }
-                return responseMessageMutable.value;
-            });
-        }
-
-        return CompletableFuture.supplyAsync(() -> {
-
-        if(!CheckForDevice()) {
-
-            return responseMessageMutable.value;
-        }
-
-            while (!messageCallback.get()) {
-                try {
-                    Thread.sleep(Configuration.PollingPeriod.toMillis());
-                } catch (InterruptedException e) {
-                    throw new RuntimeException(e);
-                }
+            synchronized (_mutex) {
+                _messageCallbacks.add(messageCallback);
+                _futureCallbacks.add(future);
             }
+            return future;
+        }
 
-            return responseMessageMutable.value;
-        });
+        // If not polling, execute directly.
+        if (!Boolean.TRUE.equals(messageCallback.get())) {
+            if (!future.isDone()) {
+                // Complete with a default/empty response on failure
+                future.complete(createResponseMessage.apply(new ArrayList<>()));
+            }
+        }
+
+        return future;
     }
 
     private static void EnqueueMessageCallback(Supplier<Boolean> messageCallback) {
@@ -314,13 +287,11 @@ public class BillValidator {
         }
     }
 
-
     private Supplier<Boolean> DequeueMessageCallback() {
         synchronized (_mutex) {
             return _messageCallbacks.poll();
         }
     }
-
 
     private static <TResponseMessage extends Rs232ResponseMessage> void LogPayloadIssues(Rs232ResponseMessage responseMessage) {
         List<String> payloadIssues = responseMessage.getPayloadIssues();
@@ -328,15 +299,15 @@ public class BillValidator {
             return;
         }
 
-        String errorMessage = "Received an invalid response for a %s";
+        StringBuilder errorMessage = new StringBuilder("Received an invalid response for a %s");
         Object[] errorArgs = new Object[payloadIssues.size() + 1];
         errorArgs[0] = StringUtils.AddSpacesToCamelCase(responseMessage.getClass().getSimpleName());
 
         for (int i = 0; i < payloadIssues.size(); i++) {
-            errorMessage += "\n\t{{%s}}";
+            errorMessage.append("\n\t{{%s}}");
             errorArgs[i + 1] = payloadIssues.get(i);
         }
-        _logger.LogError(errorMessage, errorArgs);
+        _logger.LogError(errorMessage.toString(), errorArgs);
     }
 
     private static class Mutable<TResponseMessage> {
@@ -344,33 +315,48 @@ public class BillValidator {
     }
 
     private <TResponseMessage extends Rs232ResponseMessage> MessageRetrievalResult TrySendMessage(Function<Boolean, Rs232RequestMessage> createRequestMessage,
-                                                                                                 Function<List<Byte>, TResponseMessage> createResponseMessage, Mutable<TResponseMessage> responseMessageMutix) {
+                                                                                                 Function<List<Byte>, TResponseMessage> createResponseMessage, Mutable<TResponseMessage> responseMessageMutix){
         Rs232RequestMessage requestMessage = createRequestMessage.apply(!_lastAck);
         List<Byte> requestPayload = requestMessage.getPayload();
 
         List<Byte> responsePayload = new LinkedList<Byte>();
         Duration backoffTime = Configuration.PollingPeriod;
-        for (int i = 0; i < MaxReadAttempts; i++) {
-            _serialProvider.Write(convertListToByteArray(requestPayload));
-            responsePayload = convertByteArrayToList(_serialProvider.Read(2));
-            
-            if (responsePayload.size() == 2) {
-                long remainingByteCount = (long) (responsePayload.get(1) - 2);
-                responsePayload.addAll(convertByteArrayToList(_serialProvider.Read(remainingByteCount)));
-                break;
-            }
-
+        long timeout = backoffTime.toMillis() * MaxReadAttempts;
+        long startTime = System.currentTimeMillis();
+        byte[] data = new byte[2];
+        int[] actualReadCount = new int[1];
+        while (System.currentTimeMillis() - startTime < timeout) {
             try {
-                Thread.sleep(backoffTime.toMillis());
-            } catch (InterruptedException e) {
-                _logger.LogError(e.getMessage());
+                _serialProvider.Write(convertListToByteArray(requestPayload));
+
+                Thread.sleep(50);
+
+                _serialProvider.Read(2, data, actualReadCount);
+                responsePayload.addAll(convertByteArrayToList(data));
+
+                if (responsePayload.size() == 2) {
+                    data = new byte[4096];
+                    int remainingByteCount = responsePayload.get(1) - 2;
+                    _serialProvider.Read(remainingByteCount, data, actualReadCount);
+                    responsePayload.addAll(convertByteArrayToList(data));
+                    break; // Exit loop on successful read
+                }
+
+                // Non-blocking delay
+                // Thread.sleep is not used here to avoid blocking the thread, instead we use a busy wait for the backoff time.
+                long loopStartTime = System.currentTimeMillis();
+                while (System.currentTimeMillis() - loopStartTime < backoffTime.toMillis()) {
+                    // Busy wait
+                }
+            } catch (Exception e) {
+                _logger.LogError("Exception during TrySendMessage: %s", e.getMessage());
+                return MessageRetrievalResult.Timeout;
             }
-            backoffTime.plus(BackoffIncrement);
         }
 
         responseMessageMutix.value = createResponseMessage.apply(responsePayload);
         if (OnCommunicationAttempted != null) {
-            OnCommunicationAttempted.Invoke(requestMessage, responseMessageMutix.value);
+            OnCommunicationAttempted.Invoke(requestMessage, responsePayload);
         }
 
         if (responsePayload.isEmpty()) {
@@ -424,6 +410,13 @@ public class BillValidator {
         if (messageRetrievalResult.getValue() != MessageRetrievalResult.Success.getValue()) {
             if (messageRetrievalResult.getValue() == MessageRetrievalResult.IncorrectPayload.getValue()) {
                 LogPayloadIssues(responseMessage);
+            }
+
+            if (!_futureCallbacks.isEmpty()) {
+                CompletableFuture future = _futureCallbacks.poll();
+                if (future != null) {
+                    future.completeExceptionally(new Exception("Failed to send poll message."));
+                }
             }
 
             return false;
@@ -521,6 +514,13 @@ public class BillValidator {
                         _wasBarcodeDetectedReported = true;
                     }
 
+                    if (!_futureCallbacks.isEmpty()) {
+                        CompletableFuture<BarcodeDetectedResponseMessage> future = _futureCallbacks.poll();
+                        if (future != null) {
+                            future.complete(barcodeDetectedResponseMessage);
+                        }
+                    }
+
                     break;
                 default:
                     _logger.LogDebug("Received an unknown extended command:  %s", extendedResponseMessage.getCommand().name());
@@ -558,7 +558,6 @@ public class BillValidator {
                 Thread.sleep(Configuration.PollingPeriod.toMillis());
             } catch (InterruptedException e) {
             }
-
         }
 
         return true;
@@ -630,6 +629,36 @@ public class BillValidator {
                 }
             }
             throw new IllegalArgumentException("No such MessageRetrievalResult");
+        }
+    }
+
+    private class PollingThread extends Thread{
+
+        Runnable _runnable;
+
+        public PollingThread(Runnable runnable) {
+            _runnable = runnable;
+        }
+
+        @Override
+        public void run() {
+            synchronized (_mutex) {
+                if (_isPolling) {
+                    _logger.LogDebug("The polling loop is running, so ignoring the start request");
+                }
+            }
+
+            /*if(!CheckForDevice()){
+                synchronized (_mutex) {
+                    IsConnectionPresent = false;
+                }
+            } else {*/
+                synchronized (_mutex) {
+                    _isPolling = true;
+                }
+                _worker = CompletableFuture.runAsync(_runnable, _executor);
+                IsConnectionPresent = true;
+            //}
         }
     }
 

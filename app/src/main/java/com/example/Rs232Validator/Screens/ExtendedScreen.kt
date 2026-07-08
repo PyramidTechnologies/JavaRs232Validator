@@ -38,8 +38,8 @@ fun ExtendedScreen(viewModel: ValidatorViewModel){
                 viewModel.GetLastBarcode()
             },
             modifier = Modifier
-                .width(150.dp)
-                .height(96.dp),
+                .widthIn(min = 150.dp)
+                .heightIn(min = 96.dp),
             enabled = detectBarcode.value,
             contentPadding = PaddingValues(bottom = 2.dp),
             interactionSource = remember { MutableInteractionSource() },
@@ -85,7 +85,8 @@ fun ExtendedScreen(viewModel: ValidatorViewModel){
                     verticalAlignment = Alignment.Top,
                     modifier = Modifier
                         .width(352.dp)
-                        .height(100.dp)
+                        .wrapContentHeight()
+                        .defaultMinSize(minHeight = 100.dp)
                         .padding(start = 2.dp, top = 5.dp, end = 2.dp, bottom = 7.dp)
                 ) {
                     Text(

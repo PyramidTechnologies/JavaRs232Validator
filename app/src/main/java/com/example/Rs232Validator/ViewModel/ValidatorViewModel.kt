@@ -2,10 +2,10 @@ package com.example.Rs232Validator.ViewModel
 
 import PTI.Rs232Validator.BillValidators.BillValidator
 import PTI.Rs232Validator.*
+import PTI.Rs232Validator.SerialProviders.ISerialProvider
 import PTI.Rs232Validator.Utility.ByteUtils
 import android.annotation.SuppressLint
 import android.app.Application
-import android.content.SharedPreferences
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.AndroidViewModel
@@ -13,26 +13,26 @@ import com.example.Rs232Validator.Logger
 import kotlinx.coroutines.flow.*
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-class ValidatorViewModel(
-    application: Application,
-    private val sharedPreferences: SharedPreferences
-) : AndroidViewModel(application){
+class ValidatorViewModel(application: Application) : AndroidViewModel(application){
 
     //Initial Parameters
-    @SuppressLint("StaticFieldLeak")
-    private val context = getApplication<Application>().applicationContext
     private var TimestampFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("MM-dd-yyyy HH:mm:ss a")
-    private var billValidator: BillValidator? = null
+    @SuppressLint("StaticFieldLeak")
+    private lateinit var billValidator: BillValidator
     var escrow_mode = mutableStateOf(false)
         private set
     var detect_barcode = mutableStateOf(false)
         private set
-    var enableMask = mutableStateListOf(true, true, true, true, true, true, true, true)
+    var enableMask = mutableStateListOf(true, true, true, true, true, true, true)
         private set
     fun GetMask(): Byte {
-        var mask = 0;
-        for(i in 0 .. enableMask.size-2){
+        var mask = 0
+        for(i in 0 .. enableMask.size-1){
             mask = mask or (if (enableMask[i]) 1 shl i else 0)
         }
         return mask.toByte()
@@ -45,76 +45,79 @@ class ValidatorViewModel(
     }
 
     val logger : Logger = Logger()
-
-    init {
-        if(billValidator == null) {
-            billValidator = BillValidator(
-                logger,
-                _rs232Configuration,
-                context,
-                sharedPreferences,
-                "com.example.Rs232Validator.USB_PERMISSION"
-            )
-
-            billValidator?._serialProvider?.SetConfig(9600, 7, 1,2, 0)
-
-            registerListeners()
-        }
+    
+    fun initializeValidator(serialProvider: ISerialProvider){
+        billValidator = BillValidator(logger, serialProvider, _rs232Configuration)
+        registerListeners()
     }
 
     private fun registerListeners(){
-        billValidator?.OnBillStacked?.addListener { args ->
+        billValidator.OnBillStacked?.addListener { args ->
             val billType = args.getOrNull(0) as? Byte ?:return@addListener
             updateBillValue(billType.toInt())
         }
 
-        billValidator?.OnBillEscrowed?.addListener { args ->
+        billValidator.OnBillEscrowed?.addListener {
             toggleIsBillInEscrow()
         }
 
-        billValidator?.OnStateChanged?.addListener { args ->
+        billValidator.OnStateChanged?.addListener { args ->
             val oldState: Rs232State = args.getOrNull(0) as? Rs232State ?:return@addListener
             val newState: Rs232State = args.getOrNull(1) as? Rs232State ?:return@addListener
 
             logger.LogInfo("The state changed from %s to %s.", oldState.name, newState.name)
 
-            _currentState.value = newState
+            viewModelScope.launch {
+                _currentState.value = newState
+            }
         }
 
-        billValidator?.OnBarcodeDetected?.addListener { args ->
+        billValidator.OnBarcodeDetected?.addListener { args ->
             val barcode: String = args.getOrNull(0) as? String ?:return@addListener
 
-            _lastBarcode.value = barcode
+            viewModelScope.launch {
+                _lastBarcode.value = barcode
+            }
         }
 
-        billValidator?.OnCashboxAttached?.addListener { args ->
-            _cashboxAttached.value = true
+        billValidator.OnCashboxAttached?.addListener {
+            viewModelScope.launch {
+                _cashboxAttached.value = true
+            }
         }
 
-        billValidator?.OnCashboxRemoved?.addListener { args ->
-            _cashboxAttached.value = false
+        billValidator.OnCashboxRemoved?.addListener {
+            viewModelScope.launch {
+                _cashboxAttached.value = false
+            }
         }
 
-        billValidator?.OnEventReported?.addListener { args ->
+        billValidator.OnEventReported?.addListener { args ->
             val event: Rs232Event = args.getOrNull(0) as? Rs232Event ?:return@addListener
-            logger.LogInfo("Received event(s): %s.", event.Flags())
-            _currentEvent.value = event
+            viewModelScope.launch {
+                logger.LogInfo("Received event(s): %s.", event.Flags())
+                _currentEvent.value = event
+            }
         }
 
-        billValidator?.OnConnectionLost?.addListener { args ->
-            isPolling.value = false
+        billValidator.OnConnectionLost?.addListener {
+            viewModelScope.launch {
+                isPolling.value = false
+            }
         }
 
-        billValidator?.OnCommunicationAttempted?.addListener { args ->
+        billValidator.OnCommunicationAttempted?.addListener { args ->
             val entry = PayloadExchange(
                 LocalDateTime.now().format(TimestampFormat),
                 ByteUtils.ConvertToHexString(args.getOrNull(0) as? List<Byte> ?:return@addListener, false, true),
-                args.getOrNull(1) as? String ?:return@addListener,
-                ByteUtils.ConvertToHexString(args.getOrNull(2) as? List<Byte> ?:return@addListener, false, true),
-                args.getOrNull(3) as? String ?:return@addListener
+                "",
+                ByteUtils.ConvertToHexString(args.getOrNull(1) as? List<Byte> ?:return@addListener, false, true),
+                ""
             )
 
-            _PayloadExchanges.value = _PayloadExchanges.value + entry
+            viewModelScope.launch {
+                _PayloadExchanges.update { it + entry }
+            }
         }
     }
 
@@ -130,23 +133,29 @@ class ValidatorViewModel(
     val IsBillInEscrow = _IsBillInEscrow.asStateFlow()
 
     fun onMaskChanged(type: Int, newMask: Boolean){
+        if (type < 1 || type > enableMask.size) {
+            logger.LogInfo("onMaskChanged called with invalid type: %d", type)
+            return
+        }
         enableMask[type - 1] = newMask
         _rs232Configuration.EnableMask = GetMask()
     }
 
     fun updateBillValue(billType: Int){
-        billValues[billType-1]++
+        viewModelScope.launch {
+            billValues[billType - 1]++
 
-        when(billType) {
-            1 -> billValues[7] += 1
-            2 -> billValues[7] += 2
-            3 -> billValues[7] += 5
-            4 -> billValues[7] += 10
-            5 -> billValues[7] += 20
-            6 -> billValues[7] += 50
-            7 -> billValues[7] += 100
-            else -> {
-                logger.LogInfo("Stacked an unknown bill type: %d", billType)
+            when (billType) {
+                1 -> billValues[7] += 1
+                2 -> billValues[7] += 2
+                3 -> billValues[7] += 5
+                4 -> billValues[7] += 10
+                5 -> billValues[7] += 20
+                6 -> billValues[7] += 50
+                7 -> billValues[7] += 100
+                else -> {
+                    logger.LogInfo("Stacked an unknown bill type: %d", billType)
+                }
             }
         }
     }
@@ -162,30 +171,47 @@ class ValidatorViewModel(
     }
 
     fun toggleIsBillInEscrow(){
-        _IsBillInEscrow.value = !_IsBillInEscrow.value
+        viewModelScope.launch {
+            _IsBillInEscrow.value = !_IsBillInEscrow.value
+        }
     }
 
     fun OnPollingClicked(){
         if(isPolling.value){
-            billValidator?.StopPollingLoop()
-            isPolling.value = !isPolling.value
+            billValidator.StopPollingLoop()
+            viewModelScope.launch {
+                isPolling.value = !isPolling.value
+            }
         } else {
-            billValidator?.StartPollingLoop()
-            isPolling.value = !isPolling.value
+            viewModelScope.launch {
+                withContext(Dispatchers.IO){
+                    billValidator.StartPollingLoop()
+                    isPolling.value = billValidator._isPolling
+                }
+            }
         }
     }
 
     fun OnStackClicked(){
         if(_IsBillInEscrow.value) {
-            billValidator?.StackBill()
-            _IsBillInEscrow.value = !_IsBillInEscrow.value
+
+            viewModelScope.launch {
+                withContext(Dispatchers.IO){
+                     billValidator.StackBill()
+                }
+                _IsBillInEscrow.value = !_IsBillInEscrow.value
+            }
         }
     }
 
     fun OnReturnClicked(){
         if(_IsBillInEscrow.value) {
-            billValidator?.ReturnBill()
-            _IsBillInEscrow.value = !_IsBillInEscrow.value
+            viewModelScope.launch {
+                withContext(Dispatchers.IO){
+                     billValidator.ReturnBill()
+                }
+                _IsBillInEscrow.value = !_IsBillInEscrow.value
+            }
         }
     }
 
@@ -209,79 +235,97 @@ class ValidatorViewModel(
     private val ErrorMessage = "An error occurred"
 
     fun PingValidator() {
-        val response = billValidator?.PingAsync()?.get()
-
-        telemetryResponses[0] = response?.IsValid?.get().toString()
+        viewModelScope.launch {
+            val response = billValidator.PingAsync()?.await()
+            telemetryResponses[0] = response.toString()
+        }
     }
 
     fun GetSerialNumber() {
-        val response = billValidator?.GetSerialNumberAsync()?.get()
+        viewModelScope.launch {
+            val response = billValidator.GetSerialNumberAsync()?.await()
 
-        var resultValue: String
-        if (response?.IsValid?.get() == true && response.serialNumber.isNotEmpty()) {
-            resultValue = response.serialNumber
-        } else if (response?.IsValid?.get() == true && response.serialNumber.isEmpty()) {
-            resultValue = "The acceptor was not assigned a serial number"
-        } else {
-            resultValue = ErrorMessage
+            val resultValue: String
+            /*if (response?.IsValid?.get().toString() == "true" && response?.serialNumber?.isNotEmpty() == true) {
+                    resultValue = response.serialNumber ?: ""
+                } else if (response?.IsValid?.get() == true && response.serialNumber.isEmpty()) {
+                    resultValue = "The acceptor was not assigned a serial number"
+                } else {
+                    resultValue = ErrorMessage
+                }*/
+            telemetryResponses[1] = response.toString()
         }
-
-        telemetryResponses[1] = resultValue
     }
 
     fun GetCashboxMetrics() {
-        val response = billValidator?.GetCashboxMetrics()?.get()
-        val resultValue =
-            if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
-        telemetryResponses[2] = resultValue
+        viewModelScope.launch {
+            val response = billValidator.GetCashboxMetrics()?.await()
+            val resultValue =
+                if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
+            telemetryResponses[2] = resultValue
+        }
     }
 
     fun ClearCashboxCount() {
-        val response = billValidator?.ClearCashboxCount()?.get()
-        val resultValue =
-            if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
-        telemetryResponses[3] = resultValue
+        viewModelScope.launch {
+            val response = billValidator.ClearCashboxCount()?.await()
+            val resultValue =
+                if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
+            telemetryResponses[3] = resultValue
+        }
     }
 
     fun GetUnitMetrics() {
-        val response = billValidator?.GetUnitMetrics()?.get()
-        val resultValue =
-            if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
-        telemetryResponses[4] = resultValue
+        viewModelScope.launch {
+            val response = billValidator.GetUnitMetrics()?.await()
+            val resultValue =
+                if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
+            telemetryResponses[4] = resultValue
+        }
     }
 
     fun GetServiceUsageCounters() {
-        val response = billValidator?.GetServiceUsageCounters()?.get()
-        val resultValue =
-            if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
-        telemetryResponses[5] = resultValue
+        viewModelScope.launch {
+            val response = billValidator.GetServiceUsageCounters()?.await()
+            val resultValue =
+                if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
+            telemetryResponses[5] = resultValue
+        }
     }
 
     fun GetServiceFlags() {
-        val response = billValidator?.GetServiceFlags()?.get()
-        val resultValue =
-            if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
-        telemetryResponses[6] = resultValue
+        viewModelScope.launch {
+            val response = billValidator.GetServiceFlags()?.await()
+            val resultValue =
+                if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
+            telemetryResponses[6] = resultValue
+        }
     }
 
     fun ClearServiceFlags() {
-        val response = billValidator?.ClearServiceFlags()?.get()
-        val resultValue = response?.IsValid?.get().toString()
-        telemetryResponses[7] = resultValue
+        //viewModelScope.launch {
+        //    val response = billValidator.ClearServiceFlags()?.await()
+        //    val resultValue = response?.IsValid.toString()
+        //    telemetryResponses[7] = resultValue
+        //}
     }
 
     fun GetServiceInfo() {
-        val response = billValidator?.GetServiceInfo()?.get()
-        val resultValue =
-            if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
-        telemetryResponses[8] = resultValue
+        viewModelScope.launch {
+            val response = billValidator.GetServiceInfo()?.await()
+            val resultValue =
+                if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
+            telemetryResponses[8] = resultValue
+        }
     }
 
     fun GetFirmwareMetrics() {
-        val response = billValidator?.GetFirmwareMetrics()?.get()
-        val resultValue =
-            if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
-        telemetryResponses[9] = resultValue
+        viewModelScope.launch {
+            val response = billValidator.GetFirmwareMetrics()?.await()
+            val resultValue =
+                if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
+            telemetryResponses[9] = resultValue
+        }
     }
 
 
@@ -291,17 +335,19 @@ class ValidatorViewModel(
     val lastBarcode = _lastBarcode.asStateFlow()
 
     fun GetLastBarcode() {
-        val response = billValidator?.GetDetectedBarcode()?.get()
-        var resultValue: String
-        if (response?.IsValid?.get() == true && response.barcode.length > 0) {
-            resultValue = response.barcode
-        } else if (response?.IsValid?.get() == true && response.barcode.length == 0) {
-            resultValue = "No barcode was detected since the last power cycle"
-        } else {
-            resultValue = ErrorMessage
-        }
+        viewModelScope.launch {
+            val response = billValidator.GetDetectedBarcode()?.await()
+            val resultValue: String
+            if (response?.IsValid?.get() == true && response.barcode.isNotEmpty()) {
+                resultValue = response.barcode
+            } else if (response?.IsValid?.get() == true && response.barcode.isEmpty()) {
+                resultValue = "No barcode was detected since the last power cycle"
+            } else {
+                resultValue = ErrorMessage
+            }
 
-        _lastBarcode.value = resultValue
+            _lastBarcode.value = resultValue
+        }
     }
 
 
@@ -314,14 +360,8 @@ class ValidatorViewModel(
     val PayloadExchanges: StateFlow<List<PayloadExchange>> = _PayloadExchanges.asStateFlow()
 
     fun toggleLogTab(){
-        _logsTab.value = !_logsTab.value
+        viewModelScope.launch {
+            _logsTab.value = !_logsTab.value
+        }
     }
 }
-
-data class PayloadExchange(
-    val Timestamp: String,
-    val RequestPayload: String,
-    val RequestDecodedInfo: String,
-    val ResponseString: String,
-    val ResponseDecodedInfo: String
-)

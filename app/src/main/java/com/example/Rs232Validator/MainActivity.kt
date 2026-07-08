@@ -1,5 +1,8 @@
 package com.example.Rs232Validator
 
+import PTI.Rs232Validator.SerialProviders.FT311UARTInterface
+import PTI.Rs232Validator.SerialProviders.ISerialProvider
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.ViewModelProvider
 import com.example.Rs232Validator.ui.theme.Rs232ValidatorTheme
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.*
 import com.example.Rs232Validator.Screens.*
@@ -25,10 +29,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val prefs = getSharedPreferences("Validator_prefs", 0)
+        val prefs = getSharedPreferences("Validator_prefs", Context.MODE_PRIVATE)
 
-        val factory = ValidatorViewModelFactory(application, prefs)
-        validatorViewModel = ViewModelProvider(this, factory)[ValidatorViewModel::class.java]
+        validatorViewModel = ValidatorViewModel(application)
+
+
+        var SerialProvider = FT311UARTInterface(this)
+        validatorViewModel.initializeValidator(SerialProvider)
 
         enableEdgeToEdge()
         setContent {
@@ -39,7 +46,7 @@ class MainActivity : ComponentActivity() {
                         bottomBar = {
                             BottomNavigationBar(navController = navController)
                         }, content = { padding ->
-                            NavHostContainer(navController = navController, padding = padding)
+                            NavHostContainer(navController = navController, padding = padding, viewModel = validatorViewModel)
                         }
                     )
                 }
@@ -52,7 +59,7 @@ class MainActivity : ComponentActivity() {
 fun NavHostContainer(
     navController: NavHostController,
     padding: PaddingValues,
-    viewModel: ValidatorViewModel = viewModel()
+    viewModel: ValidatorViewModel
 ){
     NavHost(
         navController = navController,
@@ -96,7 +103,13 @@ fun BottomNavigationBar(navController: NavHostController){
                 selected = currentRoute == navItem.route,
 
                 onClick = {
-                    navController.navigate(navItem.route)
+                    navController.navigate(navItem.route) {
+                        launchSingleTop = true;
+                        restoreState = true;
+                        popUpTo(navController.graph.findStartDestination().id) {
+                            saveState = true;
+                        }
+                    }
                 },
 
                 icon = {
