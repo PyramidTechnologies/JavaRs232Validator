@@ -1,12 +1,5 @@
 package PTI.Rs232Validator.BillValidators;
 
-import static PTI.Rs232Validator.Utility.ByteUtils.convertByteArrayToList;
-import static PTI.Rs232Validator.Utility.ByteUtils.convertListToByteArray;
-
-import android.app.Activity;
-import android.content.Context;
-import android.content.SharedPreferences;
-
 import PTI.Rs232Validator.CorrectableComponent;
 import PTI.Rs232Validator.Loggers.ILogger;
 import PTI.Rs232Validator.Messages.Commands.ExtendedCommand;
@@ -19,590 +12,352 @@ import PTI.Rs232Validator.Messages.Responses.Rs232ResponseMessage;
 import PTI.Rs232Validator.Messages.Responses.Telemetry.*;
 import PTI.Rs232Validator.Messages.Rs232MessageType;
 import PTI.Rs232Validator.*;
-import PTI.Rs232Validator.SerialProviders.FT311UARTInterface;
 import PTI.Rs232Validator.SerialProviders.ISerialProvider;
-import PTI.Rs232Validator.Utility.StringUtils;
+import PTI.Rs232Validator.Utility.ByteUtils;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
 * A hardware connection to a bill acceptor.
 */
-public class BillValidator extends Activity {
+public class BillValidator implements AutoCloseable {
 
     private static final byte SuccessfulPollsRequiredToStartPollingLoop = 2;
     private static final byte MaxReadAttempts = 4;
     private static final byte MaxIncorrectPayloadPardons = 2;
-    private static final Duration BackoffIncrement = Duration.ofMillis(50);
-    private static final Duration StopLoopTimeout = Duration.ofSeconds(3);
+    private static final long BackoffIncrement = 50L;
+    private static final long StopLoopTimeout = 3_000L;
 
 
     private static ILogger _logger = null;
-    private static final Object _mutex = new Object();
 
     /**
      * An instance of ISerialProvider that handles port communication.
      */
-    public ISerialProvider _serialProvider;
+    private final ISerialProvider _serialProvider;
+    /**
+     * The configuration for communicating with an RS-232 bill acceptor
+     */
+    private final Rs232Configuration Configuration;
 
     private static final Queue<Supplier<Boolean>> _messageCallbacks = new LinkedList<Supplier<Boolean>>();
     private static final Queue<CompletableFuture> _futureCallbacks = new LinkedList<>();
     private Supplier<Boolean> _lastMessageCallback;
 
-    private CompletableFuture<Void> _worker = CompletableFuture.completedFuture(null);
-    private final ExecutorService _executor = Executors.newSingleThreadExecutor();
-    private PollingThread _pollingThread = new PollingThread(this::LoopPollMessages);
-    public boolean _isPolling;
-    private static boolean _lastAck;
-    private Rs232State _state;
-    private boolean _shouldRequestBillStack;
-    private boolean _shouldRequestBillReturn;
-    private boolean _wasCashboxAttachmentReported;
-    private boolean _wasCashboxRemovalReported;
-    private boolean _wasEscrowedBillReported;
-    private boolean _wasBarcodeDetectedReported;
-    private boolean _wasConnectionLostReported;
+    private final BlockingQueue<PendingMessage<?>> messageQueue = new LinkedBlockingQueue<>();
+    private final CopyOnWriteArrayList<ValidatorEvent> listeners = new CopyOnWriteArrayList<>();
+
+    private final AtomicBoolean _isPolling = new AtomicBoolean(false);
+    private final AtomicBoolean _closed = new AtomicBoolean(false);
+
+    private final ExecutorService commandExecutor = Executors.newSingleThreadExecutor(createThreadFactory("BillValidator-CommandWorker"));
+    private ExecutorService pollingExecutor;
+    private PendingMessage<?> retryMessage;
+    private boolean retryPoll;
+
+    private volatile boolean _lastAck;
+    private volatile Rs232State _state;
+    private volatile boolean IsConnectionPresent;
+    private volatile boolean _shouldRequestBillStack;
+    private volatile boolean _shouldRequestBillReturn;
+    private volatile boolean _wasCashboxAttachmentReported;
+    private volatile boolean _wasCashboxRemovalReported;
+    private volatile boolean _wasEscrowedBillReported;
+    private volatile boolean _wasBarcodeDetectedReported;
+    private volatile boolean _wasConnectionLostReported;
 
     /**
     * Initializes a new instance of {@link BillValidator} with a provided serial connection
     */
     public BillValidator(ILogger logger, ISerialProvider serialProvider, Rs232Configuration configuration) {
-        super();
+        _logger = Objects.requireNonNull(logger);
+        Configuration = Objects.requireNonNull(configuration);
+        _serialProvider = Objects.requireNonNull(serialProvider);
 
-        _logger = logger;
-        Configuration = configuration;
-        _serialProvider = serialProvider;
-    }
-
-    /**
-     * Initializes a new instance of {@link BillValidator} without a pre-existing serial connection
-     */
-    public BillValidator(ILogger logger, Rs232Configuration configuration, Context context, SharedPreferences sharePrefSettings, String permissionString) {
-        super();
-
-        _logger = logger;
-        Configuration = configuration;
-        _serialProvider = new FT311UARTInterface(context);
-
-    }
-
-    /**
-     * Initializes an empty instance of {@link BillValidator} without a pre-existing serial connection
-     */
-    public BillValidator() {
-        super();
+        _state = Rs232State.None;
     }
 
     /**
     * An event that is raised when an attempt to communicate with the acceptor is carried out
-    */
+
     public ValidatorEvent OnCommunicationAttempted = new ValidatorEvent(0);
 
     /**
     * An event that is raised when the state of the acceptor changes
-    */
+
     public ValidatorEvent OnStateChanged = new ValidatorEvent(1);
 
     /**
     * An event that is raised when 1 or more events are reported by the acceptor
-    */
+
     public ValidatorEvent OnEventReported = new ValidatorEvent(2);
 
     /**
     * An event that is raised when the cashbox is attached
-    */
+
     public ValidatorEvent OnCashboxAttached = new ValidatorEvent(3);
 
     /**
     * An event that is raised when the cashbox is removed
-    */
+
     public ValidatorEvent OnCashboxRemoved = new ValidatorEvent(4);
 
     /**
     * An event that is raised when a bill is stacked
-    */
+
     public ValidatorEvent OnBillStacked = new ValidatorEvent(5);
 
     /**
     * An event that is raised when a bill is escrowed
-    */
+
     public ValidatorEvent OnBillEscrowed = new ValidatorEvent(6);
 
     /**
     * An event that is raised when a barcode is detected
-    */
+
     public ValidatorEvent OnBarcodeDetected = new ValidatorEvent(7);
 
     /**
     * An event that is raised when the connection to the acceptor seems to be lost
-    */
-    public ValidatorEvent OnConnectionLost = new ValidatorEvent(8);
 
-    /**
-     * The configuration for communicating with an RS-232 bill acceptor
-     */
-    public Rs232Configuration Configuration;
+    public ValidatorEvent OnConnectionLost = new ValidatorEvent(8);
 
     /**
      * Is the connection to the acceptor present?
      */
-    public static boolean IsConnectionPresent;
 
-    /**
-     * Starts the RS-232 polling loop
-     * @return True if the polling loop starts; otherwise, false
-     */
-    public void StartPollingLoop() {
-        _pollingThread.start();
+    public Rs232Configuration getConfiguration(){
+        return Configuration;
     }
 
-    /**
-     * Stops the RS-232 polling loop
-     */
-    public void StopPollingLoop() {
-        synchronized (_mutex) {
-            if (!_isPolling) {
-                _logger.LogDebug("The polling loop is not running, so ignoring the stop request");
-                return;
+    public boolean isConnectionPresent() {
+        return IsConnectionPresent;
+    }
+
+    public boolean isPolling() {
+        return _isPolling.get();
+    }
+
+    public Rs232State getState() {
+        return _state;
+    }
+
+    public void addListener(ValidatorEvent listener) {
+        listeners.addIfAbsent(Objects.requireNonNull(listener));
+    }
+
+    public void removeListener(ValidatorEvent listener) {
+        listeners.remove(listener);
+    }
+
+    private synchronized boolean startPollingLoop() {
+        ensureNotClosed();
+
+        if(_isPolling.get()){
+            _logger.LogDebug("The polling loop is running, so ignoring the start request.");
+            return false;
+        }
+
+        if(!checkForDevice()){
+            _logger.LogDebug("Failed to communicate with the bill validator");
+            IsConnectionPresent = false;
+            return false;
+        }
+
+        retryMessage = null;
+        retryPoll = false;
+
+        _isPolling.set(true);
+
+        pollingExecutor = Executors.newSingleThreadExecutor(createThreadFactory("BillValidator-PollWorker"));
+        pollingExecutor.execute(this::loopPollMessages);
+
+        return true;
+    }
+
+    public CompletableFuture<Boolean> startPollingLoopAsync() {
+        return CompletableFuture.supplyAsync(this::startPollingLoop, commandExecutor);
+    }
+
+    public synchronized void stopPollingLoop(){
+        if(!_isPolling.get()){
+            _logger.LogDebug("The polling loop is not running, so ignoring the stop request.");
+            return;
+        }
+
+        _logger.LogDebug("Stopping the polling loop...");
+
+        if(pollingExecutor != null){
+            pollingExecutor.shutdown();
+            try {
+                boolean stopped = pollingExecutor.awaitTermination(StopLoopTimeout, TimeUnit.MILLISECONDS);
+
+                if(stopped){
+                    _logger.LogDebug("Stopped the polling loop.");
+                } else{
+                    _logger.LogError("Failed to stop the polling loop within the timeout");
+
+                    pollingExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                pollingExecutor.shutdownNow();
+                _logger.LogError("Failed to stop the polling loop: " + e.getMessage());
             }
 
-            _isPolling = false;
+            pollingExecutor = null;
         }
 
-        _logger.LogDebug("Stopping the polling loop");
+        failAllPendingMessages(new IllegalStateException("The polling loop has been stopped."));
 
+        retryMessage = null;
+        retryPoll = false;
 
-        try {
-            _worker.get(StopLoopTimeout.getSeconds(), TimeUnit.SECONDS);
-        } catch (InterruptedException | ExecutionException | TimeoutException e) {
-            //throw new RuntimeException(e);
-        }
-
-
-        _messageCallbacks.clear();
-        _lastMessageCallback = null;
         _shouldRequestBillStack = false;
         _shouldRequestBillReturn = false;
         _wasCashboxAttachmentReported = false;
         _wasCashboxRemovalReported = false;
+        _wasEscrowedBillReported = false;
+        _wasBarcodeDetectedReported = false;
         _wasConnectionLostReported = false;
+
         IsConnectionPresent = false;
-        _pollingThread = new PollingThread(this::LoopPollMessages);
     }
 
-    /**
-     * Stacks a bill in escrow
-     */
-    public void StackBill() {
-        synchronized (_mutex) {
-            if (_state != Rs232State.Escrowed) {
-                _logger.LogDebug("Cannot stack a bill that is not in escrow");
-                return;
-            }
-            _shouldRequestBillStack = true;
-        }
-    }
-
-    /**
-     * Returns a bill in escrow
-     */
-    public void ReturnBill() {
-        synchronized (_mutex) {
-            if (_state != Rs232State.Escrowed) {
-                _logger.LogDebug("Cannot return a bill that is not in escrow");
-                return;
-            }
-            _shouldRequestBillReturn = true;
-        }
-    }
-
-    /**
-     * Sends an instance of {@link Rs232RequestMessage}, which should not be an instance of
-     * {@link PollRequestMessage}, to the acceptor and returns an instance of {@link TResponseMessage}
-     * @param createRequestMessage A function that returns an instance of {@link Rs232RequestMessage}
-     * @param createResponseMessage A function that returns an instance of {@link Rs232ResponseMessage}
-     * @return A completable future that returns an instance of {@link Rs232ResponseMessage}
-     * @param <TResponseMessage> An object that extends {@link Rs232ResponseMessage}
-     */
-    public <TResponseMessage extends Rs232ResponseMessage> CompletableFuture<TResponseMessage> SendNonPollMessageAsync(
-            Function<Boolean, Rs232RequestMessage> createRequestMessage,
-            Function<List<Byte>, TResponseMessage> createResponseMessage) {
-
-        CompletableFuture<TResponseMessage> future = new CompletableFuture<>();
-        Mutable<TResponseMessage> responseMessageMutable = new Mutable<>();
-
-        Supplier<Boolean> messageCallback = () -> {
-            MessageRetrievalResult messageRetrievalResult = TrySendMessage(createRequestMessage, createResponseMessage, responseMessageMutable);
-
-            if (messageRetrievalResult == MessageRetrievalResult.Success) {
-                future.complete(responseMessageMutable.value);
-                return true;
-            }
-
-            // For recoverable errors, we can retry. For others, we complete exceptionally.
-            if (messageRetrievalResult == MessageRetrievalResult.Timeout) {
-                // Instead of throwing, complete with a default/empty response
-                future.complete(createResponseMessage.apply(new ArrayList<>()));
-                return true; // Don't retry on timeout
-            }
-
-            return false; // Retry on incorrect ACK or payload
-        };
-
-        boolean isPolling;
-        synchronized (_mutex) {
-            isPolling = _isPolling;
-        }
-
-        if (isPolling) {
-            synchronized (_mutex) {
-                _messageCallbacks.add(messageCallback);
-                _futureCallbacks.add(future);
-            }
-            return future;
-        }
-
-        // If not polling, execute directly.
-        if (!Boolean.TRUE.equals(messageCallback.get())) {
-            if (!future.isDone()) {
-                // Complete with a default/empty response on failure
-                future.complete(createResponseMessage.apply(new ArrayList<>()));
-            }
-        }
-
-        return future;
-    }
-
-    private static void EnqueueMessageCallback(Supplier<Boolean> messageCallback) {
-        synchronized (_mutex) {
-            _messageCallbacks.add(messageCallback);
-        }
-    }
-
-    private Supplier<Boolean> DequeueMessageCallback() {
-        synchronized (_mutex) {
-            return _messageCallbacks.poll();
-        }
-    }
-
-    private static <TResponseMessage extends Rs232ResponseMessage> void LogPayloadIssues(Rs232ResponseMessage responseMessage) {
-        List<String> payloadIssues = responseMessage.getPayloadIssues();
-        if (payloadIssues.isEmpty()) {
+    public void stackBill() {
+        if (_state != Rs232State.Escrowed){
+            _logger.LogDebug("Cannot stack a bill that is not in escrow");
             return;
         }
-
-        StringBuilder errorMessage = new StringBuilder("Received an invalid response for a %s");
-        Object[] errorArgs = new Object[payloadIssues.size() + 1];
-        errorArgs[0] = StringUtils.AddSpacesToCamelCase(responseMessage.getClass().getSimpleName());
-
-        for (int i = 0; i < payloadIssues.size(); i++) {
-            errorMessage.append("\n\t{{%s}}");
-            errorArgs[i + 1] = payloadIssues.get(i);
-        }
-        _logger.LogError(errorMessage.toString(), errorArgs);
+        _shouldRequestBillStack = true;
     }
 
-    private static class Mutable<TResponseMessage> {
-        public TResponseMessage value;
+    public void returnBill() {
+        if (_state != Rs232State.Escrowed){
+            _logger.LogDebug("Cannot return a bill that is not in escrow");
+            return;
+        }
+        _shouldRequestBillReturn = true;
     }
 
-    private <TResponseMessage extends Rs232ResponseMessage> MessageRetrievalResult TrySendMessage(Function<Boolean, Rs232RequestMessage> createRequestMessage,
-                                                                                                 Function<List<Byte>, TResponseMessage> createResponseMessage, Mutable<TResponseMessage> responseMessageMutix){
-        Rs232RequestMessage requestMessage = createRequestMessage.apply(!_lastAck);
-        List<Byte> requestPayload = requestMessage.getPayload();
+    public <TResponseMessage extends Rs232ResponseMessage> CompletableFuture<TResponseMessage> SendNonPollMessageAsync(
+            Function<Boolean, Rs232RequestMessage> createRequestMessage,
+            Function<List<Byte>, TResponseMessage> createResponseMessage){
 
-        List<Byte> responsePayload = new LinkedList<Byte>();
-        Duration backoffTime = Configuration.PollingPeriod;
-        long timeout = backoffTime.toMillis() * MaxReadAttempts;
-        long startTime = System.currentTimeMillis();
-        byte[] data = new byte[2];
-        int[] actualReadCount = new int[1];
-        while (System.currentTimeMillis() - startTime < timeout) {
-            try {
-                _serialProvider.Write(convertListToByteArray(requestPayload));
+        ensureNotClosed();
 
-                Thread.sleep(50);
+        Objects.requireNonNull(createRequestMessage);
+        Objects.requireNonNull(createResponseMessage);
 
-                _serialProvider.Read(2, data, actualReadCount);
-                responsePayload.addAll(convertByteArrayToList(data));
+        PendingMessage<TResponseMessage> pendingMessage = new PendingMessage<>(createRequestMessage, createResponseMessage);
 
-                if (responsePayload.size() == 2) {
-                    data = new byte[4096];
-                    int remainingByteCount = responsePayload.get(1) - 2;
-                    _serialProvider.Read(remainingByteCount, data, actualReadCount);
-                    responsePayload.addAll(convertByteArrayToList(data));
-                    break; // Exit loop on successful read
+        if(_isPolling.get()){
+            messageQueue.offer(pendingMessage);
+            return pendingMessage.future;
+        }
+
+        commandExecutor.execute(() -> {
+            try{
+                if(!checkForDevice()){
+                    TResponseMessage emptyResponse = createResponseMessage.apply(new ArrayList<>());
+                    pendingMessage.future.complete(emptyResponse);
+                    return;
                 }
 
-                // Non-blocking delay
-                // Thread.sleep is not used here to avoid blocking the thread, instead we use a busy wait for the backoff time.
-                long loopStartTime = System.currentTimeMillis();
-                while (System.currentTimeMillis() - loopStartTime < backoffTime.toMillis()) {
-                    // Busy wait
-                }
-            } catch (Exception e) {
-                _logger.LogError("Exception during TrySendMessage: %s", e.getMessage());
-                return MessageRetrievalResult.Timeout;
-            }
-        }
-
-        responseMessageMutix.value = createResponseMessage.apply(responsePayload);
-        if (OnCommunicationAttempted != null) {
-            OnCommunicationAttempted.Invoke(requestMessage, responsePayload);
-        }
-
-        if (responsePayload.isEmpty()) {
-            if (!_wasConnectionLostReported) {
-                if (OnConnectionLost != null) {
-                    OnConnectionLost.Invoke();
-                }
-                _wasConnectionLostReported = true;
-            }
-
-            IsConnectionPresent = false;
-            return MessageRetrievalResult.Timeout;
-        }
-
-        _wasConnectionLostReported = false;
-        IsConnectionPresent = true;
-
-
-        if (!responseMessageMutix.value.IsValid.get()) {
-            return MessageRetrievalResult.IncorrectPayload;
-        }
-
-
-        if (requestMessage.Ack.get() != responseMessageMutix.value.Ack.get()) {
-            return MessageRetrievalResult.IncorrectAck;
-        }
-
-        _lastAck = responseMessageMutix.value.Ack.get();
-        return MessageRetrievalResult.Success;
-    }
-    
-    private boolean TrySendPollMessage(Function<Boolean, Rs232RequestMessage> createPollRequestMessage) {
-        Mutable<PollResponseMessage> responseMessageMutix = new Mutable<PollResponseMessage>();
-        MessageRetrievalResult messageRetrievalResult = TrySendMessage(createPollRequestMessage,
-                payload -> {
-                    PollResponseMessage pollResponseMessage = new PollResponseMessage(payload);
-                    if (pollResponseMessage.GetPayloadIssues().isEmpty()) {
-                        return pollResponseMessage;
+                while(!pendingMessage.future.isDone()){
+                    boolean finished = processPendingMessage(pendingMessage);
+                    if(finished){
+                        break;
                     }
 
-                    ExtendedResponseMessage extendedResponseMessage = new ExtendedResponseMessage(payload);
-                    if (extendedResponseMessage.GetPayloadIssues().isEmpty()) {
-                        return extendedResponseMessage;
-                    }
-
-                    return pollResponseMessage;
-                },
-                responseMessageMutix);
-
-        PollResponseMessage responseMessage = responseMessageMutix.value;
-        if (messageRetrievalResult.getValue() != MessageRetrievalResult.Success.getValue()) {
-            if (messageRetrievalResult.getValue() == MessageRetrievalResult.IncorrectPayload.getValue()) {
-                LogPayloadIssues(responseMessage);
-            }
-
-            if (!_futureCallbacks.isEmpty()) {
-                CompletableFuture future = _futureCallbacks.poll();
-                if (future != null) {
-                    future.completeExceptionally(new Exception("Failed to send poll message."));
+                    sleep(Configuration.PollingPeriod);
                 }
+            } catch(Throwable throwable){
+                pendingMessage.future.completeExceptionally(throwable);
             }
+        });
 
-            return false;
+        return pendingMessage.future;
+    }
+
+    private <TResponseMessage extends Rs232ResponseMessage> boolean processPendingMessage(PendingMessage<TResponseMessage> pendingMessage) {
+        if (pendingMessage.future.isDone() || pendingMessage.future.isCancelled()) {
+            return true;
         }
 
-        if (responseMessage.getState() != _state) {
-            _logger.LogDebug("The state changed from %s to %s", _state, responseMessage.getState());
-            if (OnStateChanged != null) {
-                OnStateChanged.Invoke(_state, responseMessage.getState());
-            }
+        try{
+            MessageRetrievalResult<TResponse> messageResult = trySendMessage(pendingMessage.createRequestMessage, pendingMessage.createResponseMessage);
 
-            synchronized (_mutex) {
-                _state = responseMessage.getState();
-            }
-        }
+            switch (messageResult.result) {
+                case IncorrectAck:
+                    return false;
 
-        if (responseMessage.getEvent().flags != Rs232Event.None) {
-            _logger.LogDebug("Received event(s): %s", responseMessage.getEvent().Flags());
-            if (OnEventReported != null) {
-                OnEventReported.Invoke(responseMessage.getEvent());
-            }
-        }
-
-        if (responseMessage.getIsCashboxPresent() && !_wasCashboxAttachmentReported) {
-            _logger.LogDebug("The cashbox was attached.");
-            if (OnCashboxAttached != null) {
-                OnCashboxAttached.Invoke();
-            }
-
-            _wasCashboxAttachmentReported = true;
-            _wasCashboxRemovalReported = false;
-        }
-
-        if (!responseMessage.getIsCashboxPresent() && !_wasCashboxRemovalReported) {
-            _logger.LogDebug("The cashbox was removed.");
-            if (OnCashboxRemoved != null) {
-                OnCashboxRemoved.Invoke();
-            }
-
-            _wasCashboxAttachmentReported = false;
-            _wasCashboxRemovalReported = true;
-        }
-
-        if (responseMessage.getEvent().hasFlag(Rs232Event.Stacked)) {
-            if (responseMessage.getBillType() == 0) {
-                _logger.LogError("Stacked an unknown bill");
-            } else {
-                _logger.LogDebug("Stacked a bill of type %d", responseMessage.getBillType());
-            }
-
-            if (OnBillStacked != null) {
-                OnBillStacked.Invoke(responseMessage.getBillType());
-            }
-        }
-
-        if (responseMessage.getState() == Rs232State.Escrowed && !_wasEscrowedBillReported) {
-            if (responseMessage.getBillType() == 0) {
-                _logger.LogError("Escrowed an unknown bill");
-            } else {
-                _logger.LogDebug("Escrowed a bill of type %d", responseMessage.getBillType());
-            }
-
-            if (OnBillEscrowed != null) {
-                OnBillEscrowed.Invoke(responseMessage.getBillType());
-            }
-            _wasEscrowedBillReported = true;
-        }
-
-        if (responseMessage.getState() != Rs232State.Escrowed) {
-            synchronized (_mutex) {
-                _shouldRequestBillStack = false;
-                _shouldRequestBillReturn = false;
-            }
-
-            _wasEscrowedBillReported = false;
-            _wasBarcodeDetectedReported = false;
-        }
-
-        if (responseMessage.MessageType.get().getValue() == Rs232MessageType.ExtendedCommand.getValue()) {
-            _logger.LogDebug("Received extended command response message.");
-            ExtendedResponseMessage extendedResponseMessage = (ExtendedResponseMessage) responseMessage;
-            switch (extendedResponseMessage.getCommand()) {
-                case BarcodeDetected:
-                    BarcodeDetectedResponseMessage barcodeDetectedResponseMessage = new BarcodeDetectedResponseMessage(extendedResponseMessage.getPayload());
-                    if (!barcodeDetectedResponseMessage.IsValid.get()) {
-                        LogPayloadIssues(barcodeDetectedResponseMessage);
+                case IncorrectPayload:
+                    int incorrectPayloadCount = pendingMessage.incorrectPayloadCount.incrementAndGet();
+                    if(incorrectPayloadCount <= MaxIncorrectPayloadPardons){
                         return false;
                     }
 
-                    if (!_wasBarcodeDetectedReported) {
-                        _logger.LogDebug("Detected a barcode: %s", barcodeDetectedResponseMessage.getBarcode());
-                        if (OnBarcodeDetected != null) {
-                            OnBarcodeDetected.Invoke(barcodeDetectedResponseMessage.getBarcode());
-                        }
-                        _wasBarcodeDetectedReported = true;
-                    }
-
-                    if (!_futureCallbacks.isEmpty()) {
-                        CompletableFuture<BarcodeDetectedResponseMessage> future = _futureCallbacks.poll();
-                        if (future != null) {
-                            future.complete(barcodeDetectedResponseMessage);
-                        }
-                    }
-
+                    logPayloadIssues(messageResult.response);
                     break;
-                default:
-                    _logger.LogDebug("Received an unknown extended command:  %s", extendedResponseMessage.getCommand().name());
+
+                case Success:
+                case Timeout:
                     break;
             }
+
+            pendingMessage.future.complete(messageResult.response);
+
+            return true;
+        } catch (Throwable throwable){
+            pendingMessage.future.completeExceptionally(throwable);
+            return true;
         }
-        return true;
     }
 
-    private boolean CheckForDevice() {
-        int successfulPolls = 0;
-        boolean wasAckFlipped = false;
-        Mutable<PollResponseMessage> pollResponseMessageMutix = new Mutable<PollResponseMessage>();
-
-        while (successfulPolls < SuccessfulPollsRequiredToStartPollingLoop) {
-            MessageRetrievalResult messageRetrievalResult = TrySendMessage(PollRequestMessage::new, PollResponseMessage::new, pollResponseMessageMutix);
-            PollResponseMessage pollResponseMessage = pollResponseMessageMutix.value;
-            if (messageRetrievalResult.getValue() != MessageRetrievalResult.Success.getValue()) {
-                if (messageRetrievalResult.getValue() == MessageRetrievalResult.IncorrectPayload.getValue()) {
-                    return false;
-                }
-
-                if (wasAckFlipped) {
-                    LogPayloadIssues(pollResponseMessage);
-                    return false;
-                }
-
-                wasAckFlipped = true;
-                _lastAck = !_lastAck;
-                continue;
-            }
-
-            successfulPolls++;
-            try {
-                Thread.sleep(Configuration.PollingPeriod.toMillis());
-            } catch (InterruptedException e) {
-            }
-        }
-
-        return true;
+    private boolean processUnknownPendingMessage(PendingMessage<?> pendingMessage){
+        return processPendingMessage((PendingMessage) pendingMessage);
     }
 
-    private void LoopPollMessages() {
-        while (true) {
-            synchronized (_mutex) {
-                if (!_isPolling) {
-                    _logger.LogDebug("Received the stop signal");
-                    return;
-                }
-            }
+    private <TResponseMessage extends Rs232ResponseMessage> MessageRetrievalResult<TResponseMessage> trySendMessage(
+            Function<Boolean, Rs232RequestMessage> createRequestMessage,
+            Function<List<Byte>, TResponseMessage> createResponseMessage) {
 
-            if (_lastMessageCallback != null) {
-                if (Boolean.TRUE.equals(_lastMessageCallback.get())) {
-                    _lastMessageCallback = null;
-                }
-            } else {
-                Supplier<Boolean> messageCallback = DequeueMessageCallback();
-                if (messageCallback != null) {
-                    if (!Boolean.TRUE.equals(messageCallback.get())) {
-                        _lastMessageCallback = messageCallback;
-                    }
-                } else {
-                    messageCallback = () -> TrySendPollMessage(ack ->
-                            new PollRequestMessage(ack)
-                                    .SetEnableMask(Configuration.EnableMask)
-                                    .SetEscrowRequested(Configuration.ShouldEscrow
-                                            || _shouldRequestBillStack
-                                            || _shouldRequestBillReturn)
-                                    .SetStackRequested(_shouldRequestBillStack)
-                                    .SetReturnRequested(_shouldRequestBillReturn)
-                                    .SetBarcodeDetectionRequested(Configuration.ShouldDetectBarcodes));
-                    if (!Boolean.TRUE.equals(messageCallback.get())) {
-                        _lastMessageCallback = messageCallback;
-                    }
-                }
-            }
+        Rs232RequestMessage requestMessage = createRequestMessage.apply(!_lastAck);
 
-            try {
-                Thread.sleep(Configuration.PollingPeriod.toMillis());
-            } catch (InterruptedException e) {
+        byte[] requestPayload = ByteUtils.convertListToByteArray(requestMessage.getPayload());
+
+        byte[] responsePayload = new byte[4096];
+        byte[] firstBytes = new byte[2];
+        int[] actualResponseLength = new int[1];
+
+        long backoffMilliseconds = Configuration.PollingPeriod;
+
+        for (int attempt = 0; attempt < MaxReadAttempts; attempt++){
+
+            _serialProvider.Write(requestPayload);
+
+            _serialProvider.Read(2, firstBytes, actualResponseLength);
+
+            List<Byte> responseList = ByteUtils.convertByteArrayToList(firstBytes);
+            if(responseList.isEmpty()){
+
             }
         }
+    }
+
+
+    @Override
+    public void close() throws Exception {
+
     }
 
     private enum MessageRetrievalResult {
@@ -631,37 +386,6 @@ public class BillValidator extends Activity {
             throw new IllegalArgumentException("No such MessageRetrievalResult");
         }
     }
-
-    private class PollingThread extends Thread{
-
-        Runnable _runnable;
-
-        public PollingThread(Runnable runnable) {
-            _runnable = runnable;
-        }
-
-        @Override
-        public void run() {
-            synchronized (_mutex) {
-                if (_isPolling) {
-                    _logger.LogDebug("The polling loop is running, so ignoring the start request");
-                }
-            }
-
-            /*if(!CheckForDevice()){
-                synchronized (_mutex) {
-                    IsConnectionPresent = false;
-                }
-            } else {*/
-                synchronized (_mutex) {
-                    _isPolling = true;
-                }
-                _worker = CompletableFuture.runAsync(_runnable, _executor);
-                IsConnectionPresent = true;
-            //}
-        }
-    }
-
 
     /// Send Telemetry Request Functions
 

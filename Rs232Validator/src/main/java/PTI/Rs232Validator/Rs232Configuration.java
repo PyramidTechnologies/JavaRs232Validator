@@ -36,5 +36,5 @@ public class Rs232Configuration {
     /**
      * The time period between messages sent from the host to the acceptor
      */
-    public Duration PollingPeriod =  Duration.ofMillis(100);
+    public long PollingPeriod =  100L;
 }

@@ -29,8 +29,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val prefs = getSharedPreferences("Validator_prefs", Context.MODE_PRIVATE)
-
         validatorViewModel = ValidatorViewModel(application)
 
 
