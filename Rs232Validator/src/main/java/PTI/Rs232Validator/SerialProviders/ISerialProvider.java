@@ -1,5 +1,7 @@
 package PTI.Rs232Validator.SerialProviders;
 
+import PTI.Rs232Validator.Loggers.ILogger;
+
 /**
  * A provider of serial communication to an external device
  */
@@ -36,12 +38,14 @@ public interface ISerialProvider{
      * Writes data to the external device
      * @param data The data to write
      */
-    void Write(byte[] data);
+    byte Write(int numBytes, byte[] data);
 
     /**
      * Closes the connection to the external device
      * @implNote Closing the connection also closes the application
      */
     void close();
+
+    void SetLogger(ILogger logger);
 
 }

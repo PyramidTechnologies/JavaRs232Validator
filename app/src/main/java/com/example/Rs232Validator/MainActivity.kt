@@ -1,8 +1,7 @@
 package com.example.Rs232Validator
 
-import PTI.Rs232Validator.SerialProviders.FT311UARTInterface
-import PTI.Rs232Validator.SerialProviders.ISerialProvider
-import android.content.Context
+
+import PTI.Rs232Validator.SerialProviders.SerialPort
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,9 +12,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.lifecycle.ViewModelProvider
 import com.example.Rs232Validator.ui.theme.Rs232ValidatorTheme
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.*
@@ -25,15 +22,14 @@ import com.example.Rs232Validator.ViewModel.*
 
 class MainActivity : ComponentActivity() {
     private lateinit var validatorViewModel: ValidatorViewModel
+    private val serialProvider: SerialPort by lazy { SerialPort(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         validatorViewModel = ValidatorViewModel(application)
 
-
-        var SerialProvider = FT311UARTInterface(this)
-        validatorViewModel.initializeValidator(SerialProvider)
+        validatorViewModel.initializeValidator(serialProvider)
 
         enableEdgeToEdge()
         setContent {
@@ -50,6 +46,25 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume(){
+        super.onResume()
+        serialProvider.ResumeAccessory()
+    }
+
+    override fun onPause(){
+        super.onPause()
+    }
+
+    override fun onStop() {
+        super.onStop()
+    }
+
+    override fun onDestroy() {
+        validatorViewModel.billValidator.close()
+        serialProvider.DestroyAccessory(serialProvider.isConfiged != 0x00.toByte())
+        super.onDestroy()
     }
 }
 

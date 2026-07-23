@@ -166,10 +166,19 @@ public class ByteUtils {
 
     public static byte[] convertListToByteArray(List<Byte> list){
         byte[] bytes = new byte[list.size()];
+        int i = 0;
         for(byte b : list){
-            bytes[list.indexOf(b)] = b;
+            bytes[i] = b;
+            i++;
         }
 
         return bytes;
+    }
+
+    public static byte[] concatArrays(byte[] first, byte[] second) {
+        byte[] result = new byte[first.length + second.length];
+        System.arraycopy(first, 0, result, 0, first.length);
+        System.arraycopy(second, 0, result, first.length, second.length);
+        return result;
     }
 }

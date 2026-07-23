@@ -2,7 +2,11 @@ package com.example.Rs232Validator.ViewModel
 
 import PTI.Rs232Validator.BillValidators.BillValidator
 import PTI.Rs232Validator.*
+import PTI.Rs232Validator.EventListener.BillValidatorListener
+import PTI.Rs232Validator.EventListener.CommunicationAttemptedEventArgs
+import PTI.Rs232Validator.EventListener.StateChangedEventArgs
 import PTI.Rs232Validator.SerialProviders.ISerialProvider
+import PTI.Rs232Validator.SerialProviders.SerialPort
 import PTI.Rs232Validator.Utility.ByteUtils
 import android.annotation.SuppressLint
 import android.app.Application
@@ -23,7 +27,7 @@ class ValidatorViewModel(application: Application) : AndroidViewModel(applicatio
     //Initial Parameters
     private var TimestampFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("MM-dd-yyyy HH:mm:ss a")
     @SuppressLint("StaticFieldLeak")
-    private lateinit var billValidator: BillValidator
+    lateinit var billValidator: BillValidator
     var escrow_mode = mutableStateOf(false)
         private set
     var detect_barcode = mutableStateOf(false)
@@ -46,82 +50,10 @@ class ValidatorViewModel(application: Application) : AndroidViewModel(applicatio
 
     val logger : Logger = Logger()
     
-    fun initializeValidator(serialProvider: ISerialProvider){
+    fun initializeValidator(serialProvider: SerialPort){
         billValidator = BillValidator(logger, serialProvider, _rs232Configuration)
-        registerListeners()
+        billValidator.addListener(EventListener())
     }
-
-    private fun registerListeners(){
-        billValidator.OnBillStacked?.addListener { args ->
-            val billType = args.getOrNull(0) as? Byte ?:return@addListener
-            updateBillValue(billType.toInt())
-        }
-
-        billValidator.OnBillEscrowed?.addListener {
-            toggleIsBillInEscrow()
-        }
-
-        billValidator.OnStateChanged?.addListener { args ->
-            val oldState: Rs232State = args.getOrNull(0) as? Rs232State ?:return@addListener
-            val newState: Rs232State = args.getOrNull(1) as? Rs232State ?:return@addListener
-
-            logger.LogInfo("The state changed from %s to %s.", oldState.name, newState.name)
-
-            viewModelScope.launch {
-                _currentState.value = newState
-            }
-        }
-
-        billValidator.OnBarcodeDetected?.addListener { args ->
-            val barcode: String = args.getOrNull(0) as? String ?:return@addListener
-
-            viewModelScope.launch {
-                _lastBarcode.value = barcode
-            }
-        }
-
-        billValidator.OnCashboxAttached?.addListener {
-            viewModelScope.launch {
-                _cashboxAttached.value = true
-            }
-        }
-
-        billValidator.OnCashboxRemoved?.addListener {
-            viewModelScope.launch {
-                _cashboxAttached.value = false
-            }
-        }
-
-        billValidator.OnEventReported?.addListener { args ->
-            val event: Rs232Event = args.getOrNull(0) as? Rs232Event ?:return@addListener
-            viewModelScope.launch {
-                logger.LogInfo("Received event(s): %s.", event.Flags())
-                _currentEvent.value = event
-            }
-        }
-
-        billValidator.OnConnectionLost?.addListener {
-            viewModelScope.launch {
-                isPolling.value = false
-            }
-        }
-
-        billValidator.OnCommunicationAttempted?.addListener { args ->
-            val entry = PayloadExchange(
-                LocalDateTime.now().format(TimestampFormat),
-                ByteUtils.ConvertToHexString(args.getOrNull(0) as? List<Byte> ?:return@addListener, false, true),
-                "",
-                ByteUtils.ConvertToHexString(args.getOrNull(1) as? List<Byte> ?:return@addListener, false, true),
-                ""
-            )
-
-            viewModelScope.launch {
-                _PayloadExchanges.update { it + entry }
-            }
-        }
-    }
-
-
 
     //Polling Screen Variables and Methods
     var isPolling = mutableStateOf(false)
@@ -178,15 +110,15 @@ class ValidatorViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun OnPollingClicked(){
         if(isPolling.value){
-            billValidator.StopPollingLoop()
+            billValidator.stopPollingLoop()
             viewModelScope.launch {
                 isPolling.value = !isPolling.value
             }
         } else {
             viewModelScope.launch {
                 withContext(Dispatchers.IO){
-                    billValidator.StartPollingLoop()
-                    isPolling.value = billValidator._isPolling
+                    isPolling.value = billValidator.startPollingLoopAsync().get()
+                    isPolling.value = true
                 }
             }
         }
@@ -197,7 +129,7 @@ class ValidatorViewModel(application: Application) : AndroidViewModel(applicatio
 
             viewModelScope.launch {
                 withContext(Dispatchers.IO){
-                     billValidator.StackBill()
+                     billValidator.stackBill()
                 }
                 _IsBillInEscrow.value = !_IsBillInEscrow.value
             }
@@ -208,7 +140,7 @@ class ValidatorViewModel(application: Application) : AndroidViewModel(applicatio
         if(_IsBillInEscrow.value) {
             viewModelScope.launch {
                 withContext(Dispatchers.IO){
-                     billValidator.ReturnBill()
+                     billValidator.returnBill()
                 }
                 _IsBillInEscrow.value = !_IsBillInEscrow.value
             }
@@ -237,7 +169,11 @@ class ValidatorViewModel(application: Application) : AndroidViewModel(applicatio
     fun PingValidator() {
         viewModelScope.launch {
             val response = billValidator.PingAsync()?.await()
-            telemetryResponses[0] = response.toString()
+            if(response?.IsValid?.get() == true){
+                telemetryResponses[0] = "True"
+            } else {
+                telemetryResponses[0] = ErrorMessage
+            }
         }
     }
 
@@ -246,14 +182,14 @@ class ValidatorViewModel(application: Application) : AndroidViewModel(applicatio
             val response = billValidator.GetSerialNumberAsync()?.await()
 
             val resultValue: String
-            /*if (response?.IsValid?.get().toString() == "true" && response?.serialNumber?.isNotEmpty() == true) {
+            if (response?.IsValid?.get().toString() == "true" && response?.serialNumber?.isNotEmpty() == true) {
                     resultValue = response.serialNumber ?: ""
-                } else if (response?.IsValid?.get() == true && response.serialNumber.isEmpty()) {
+            } else if (response?.IsValid?.get() == true && response.serialNumber.isEmpty()) {
                     resultValue = "The acceptor was not assigned a serial number"
-                } else {
+            } else {
                     resultValue = ErrorMessage
-                }*/
-            telemetryResponses[1] = response.toString()
+            }
+            telemetryResponses[1] = resultValue
         }
     }
 
@@ -270,7 +206,7 @@ class ValidatorViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val response = billValidator.ClearCashboxCount()?.await()
             val resultValue =
-                if (response?.IsValid?.get() == true) response.toString() else ErrorMessage
+                if (response?.IsValid?.get() == true) "True" else ErrorMessage
             telemetryResponses[3] = resultValue
         }
     }
@@ -362,6 +298,47 @@ class ValidatorViewModel(application: Application) : AndroidViewModel(applicatio
     fun toggleLogTab(){
         viewModelScope.launch {
             _logsTab.value = !_logsTab.value
+        }
+    }
+
+
+    // Event Listener for BillValidator events
+    class EventListener() : BillValidatorListener{
+
+        override fun onCommunicationAttempted(event : CommunicationAttemptedEventArgs){
+            // Handle the event here
+        }
+
+        override fun onStateChanged(event: StateChangedEventArgs) {
+
+        }
+
+        override fun onEventReported(event: Rs232Event) {
+
+        }
+
+        override fun onCashboxAttached() {
+
+        }
+
+        override fun onCashboxRemoved() {
+
+        }
+
+        override fun onBillStacked(billType: Int) {
+
+        }
+
+        override fun onBillEscrowed(billType: Int) {
+
+        }
+
+        override fun onBarcodeDetected(barcode: String) {
+
+        }
+
+        override fun onConnectionLost() {
+
         }
     }
 }
