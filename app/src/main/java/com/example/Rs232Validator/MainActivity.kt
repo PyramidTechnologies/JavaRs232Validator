@@ -2,6 +2,7 @@ package com.example.Rs232Validator
 
 
 import PTI.Rs232Validator.SerialProviders.SerialPort
+import android.content.pm.ActivityInfo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -81,10 +82,6 @@ fun NavHostContainer(
         builder = {
             composable("polling") {
                 PollingScreen(viewModel = viewModel)
-            }
-
-            composable("states") {
-                StatesScreen(viewModel = viewModel)
             }
 
             composable("telemetry") {

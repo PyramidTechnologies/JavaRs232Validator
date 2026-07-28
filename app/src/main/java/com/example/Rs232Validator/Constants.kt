@@ -15,12 +15,6 @@ object Constants {
         ),
 
         BottomNavItem(
-            label = "States",
-            icon = Icons.Filled.Build,
-            route = "states"
-        ),
-
-        BottomNavItem(
             label = "Telemetry",
             icon = Icons.Filled.Settings,
             route = "telemetry"

@@ -1,7 +1,6 @@
 package PTI.Rs232Validator.BillValidators;
 
 import PTI.Rs232Validator.CorrectableComponent;
-import PTI.Rs232Validator.EventListener.BillValidatorListener;
 import PTI.Rs232Validator.EventListener.CommunicationAttemptedEventArgs;
 import PTI.Rs232Validator.EventListener.StateChangedEventArgs;
 import PTI.Rs232Validator.Loggers.ILogger;
@@ -15,39 +14,61 @@ import PTI.Rs232Validator.Messages.Responses.Rs232ResponseMessage;
 import PTI.Rs232Validator.Messages.Responses.Telemetry.*;
 import PTI.Rs232Validator.Messages.Rs232MessageType;
 import PTI.Rs232Validator.*;
-import PTI.Rs232Validator.SerialProviders.ISerialProvider;
 import PTI.Rs232Validator.SerialProviders.SerialPort;
 import PTI.Rs232Validator.Utility.ByteUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Objects;
-import java.util.Queue;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
-import java.util.function.Supplier;
 
 /**
 * A hardware connection to a bill acceptor.
 */
 public class BillValidator implements AutoCloseable {
 
+    /**
+     * The number of successful polls required to start the polling loop.
+     */
     private static final byte SuccessfulPollsRequiredToStartPollingLoop = 2;
+    /**
+     * The maximum number of attempts to write to and read from the acceptor before giving up.
+     */
     private static final byte MaxReadAttempts = 4;
+    /**
+     * The maximum number of times to allow an incorrect payload before giving up on a message.
+     */
     private static final byte MaxIncorrectPayloadPardons = 2;
 
+    /**
+     * The serial status code indicating a successful operation.
+     */
     private static final int SERIAL_STATUS_SUCCESS = 0x00;
+    /**
+     * The serial status code indicating that no data was available to read from the acceptor.
+     */
     private static final int SERIAL_STATUS_NO_DATA = 0x01;
 
+    /**
+     * The amount of time to add to the read timeout after each failed attempt to read from the acceptor.
+     */
     private static final long BACKOFF_INCREMENT_MILLISECONDS = 50L;
+    /**
+     * The amount of time to wait before retrying a read operation after a failed attempt.
+     */
     private static final long READ_RETRY_DELAY_MILLISECONDS = 5L;
+    /**
+     * The amount of time to wait for the polling loop to stop gracefully before forcing a shutdown.
+     */
     private static final long STOP_LOOP_TIMEOUT_MILLISECONDS = 3_000L;
 
-
+    /**
+     * An instance of ILogger that handles logging
+     */
     private static ILogger _logger = null;
 
     /**
@@ -59,116 +80,176 @@ public class BillValidator implements AutoCloseable {
      */
     private final Rs232Configuration Configuration;
 
+    /**
+     * A queue of pending messages to be sent to the acceptor.
+     */
     private final BlockingQueue<PendingMessage<?>> messageQueue = new LinkedBlockingQueue<>();
-    private final CopyOnWriteArrayList<BillValidatorListener> listeners = new CopyOnWriteArrayList<>();
 
+    /**
+     * Flag indicating whether the polling loop is currently running.
+     */
     private final AtomicBoolean _isPolling = new AtomicBoolean(false);
+    /**
+     * Flag indicating whether the BillValidator has been closed.
+     */
     private final AtomicBoolean _closed = new AtomicBoolean(false);
 
+    /**
+     * An executor service for handling command execution in a single thread.
+     */
     private final ExecutorService commandExecutor = Executors.newSingleThreadExecutor(createThreadFactory("BillValidator-CommandWorker"));
+    /**
+     * An executor service for handling polling in a single thread.
+     */
     private ExecutorService pollingExecutor;
+    /**
+     * The thread that is currently running the polling loop.
+     */
     private volatile Thread pollingThread;
+    /**
+     * The last message that failed to be sent to the acceptor and needs to be retried.
+     */
     private PendingMessage<?> retryMessage;
+    /**
+     * Flag indicating whether the polling loop should retry sending a poll message to the acceptor.
+     */
     private boolean retryPoll;
 
+    /**
+     * Flag indicating the ack value of the last message sent to the acceptor.
+     */
     private volatile boolean _lastAck;
+    /**
+     * The current state of the acceptor.
+     */
     private volatile Rs232State _state;
+    /**
+     * Flag indicating whether the connection to the acceptor is present.
+     */
     private volatile boolean IsConnectionPresent;
 
+    /**
+     * Flag indicating whether a bill stack request should be sent to the acceptor.
+     */
     private volatile boolean _shouldRequestBillStack;
+    /**
+     * Flag indicating whether a bill return request should be sent to the acceptor.
+     */
     private volatile boolean _shouldRequestBillReturn;
 
+    /**
+     * Flag indicating whether the cashbox attachment event has been reported.
+     */
     private volatile boolean _wasCashboxAttachmentReported;
+    /**
+     * Flag indicating whether the cashbox removal event has been reported.
+     */
     private volatile boolean _wasCashboxRemovalReported;
+    /**
+     * Flag indicating whether a bill escrowed event has been reported.
+     */
     private volatile boolean _wasEscrowedBillReported;
+    /**
+     * Flag indicating whether a barcode detected event has been reported.
+     */
     private volatile boolean _wasBarcodeDetectedReported;
+    /**
+     * Flag indicating whether a connection lost event has been reported.
+     */
     private volatile boolean _wasConnectionLostReported;
 
     /**
-    * Initializes a new instance of {@link BillValidator} with a provided serial connection
-    */
+     * Initializes a new instance of {@link BillValidator}
+     * @param logger An instance of {@link ILogger} that handles logging
+     * @param serialProvider An instance of {@link SerialPort} that handles port communication
+     * @param configuration The configuration for communicating with an RS-232 bill acceptor
+     */
     public BillValidator(ILogger logger, SerialPort serialProvider, Rs232Configuration configuration) {
         _logger = Objects.requireNonNull(logger);
         Configuration = Objects.requireNonNull(configuration);
         _serialProvider = Objects.requireNonNull(serialProvider);
         _serialProvider.logger = _logger;
 
-        //_serialProvider.SetConfig((byte) 9600, (byte) 7, (byte) 1, (byte) 2, (byte) 0);
         _state = Rs232State.None;
     }
 
     /**
     * An event that is raised when an attempt to communicate with the acceptor is carried out
-
+    */
     public ValidatorEvent OnCommunicationAttempted = new ValidatorEvent(0);
 
     /**
     * An event that is raised when the state of the acceptor changes
-
+    */
     public ValidatorEvent OnStateChanged = new ValidatorEvent(1);
 
     /**
     * An event that is raised when 1 or more events are reported by the acceptor
-
+     */
     public ValidatorEvent OnEventReported = new ValidatorEvent(2);
 
     /**
     * An event that is raised when the cashbox is attached
-
+    */
     public ValidatorEvent OnCashboxAttached = new ValidatorEvent(3);
 
     /**
     * An event that is raised when the cashbox is removed
-
+     */
     public ValidatorEvent OnCashboxRemoved = new ValidatorEvent(4);
 
     /**
     * An event that is raised when a bill is stacked
-
+     */
     public ValidatorEvent OnBillStacked = new ValidatorEvent(5);
 
     /**
     * An event that is raised when a bill is escrowed
-
+     */
     public ValidatorEvent OnBillEscrowed = new ValidatorEvent(6);
 
     /**
     * An event that is raised when a barcode is detected
-
+     */
     public ValidatorEvent OnBarcodeDetected = new ValidatorEvent(7);
 
     /**
     * An event that is raised when the connection to the acceptor seems to be lost
-
+     */
     public ValidatorEvent OnConnectionLost = new ValidatorEvent(8);
 
     /**
-     * Is the connection to the acceptor present?
+     * Gets the configuration for communicating with an RS-232 bill acceptor
+     * @return {@link Rs232Configuration}
      */
-
     public Rs232Configuration getConfiguration(){
         return Configuration;
     }
 
+    /**
+     * Gets the flag indicating whether the connection to the acceptor is present
+     * @return {@code true} if the connection is present; otherwise, {@code false}
+     */
     public boolean isConnectionPresent() {
         return IsConnectionPresent;
     }
 
+    /**
+     * Gets the flag indicating whether the polling loop is currently running
+     * @return {@code true} if the polling loop is running; otherwise, {@code false}
+     */
     public boolean isPolling() {
         return _isPolling.get();
     }
 
+    /**
+     * Gets the current state of the acceptor
+     * @return {@link Rs232State}
+     */
     public Rs232State getState() {
         return _state;
     }
 
-    public void addListener(BillValidatorListener listener) {
-        listeners.addIfAbsent(Objects.requireNonNull(listener));
-    }
-
-    public void removeListener(BillValidatorListener listener) {
-        listeners.remove(listener);
-    }
 
     /**
      * Starts the polling loop to continuously poll the acceptor for messages. For internal use only;
@@ -176,18 +257,18 @@ public class BillValidator implements AutoCloseable {
      * @return {@code true} if the polling loop was started; otherwise, {@code false}
      */
     private synchronized boolean startPollingLoop() {
-        //ensureNotClosed();
+        ensureNotClosed();
 
         if(_isPolling.get()){
             _logger.LogDebug("The polling loop is running, so ignoring the start request.");
             return false;
         }
 
-        /*if(!checkForDevice()){
+        if(!checkForDevice()){
             _logger.LogDebug("Failed to communicate with the bill validator");
             IsConnectionPresent = false;
             return false;
-        }*/
+        }
 
         retryMessage = null;
         retryPoll = false;
@@ -200,41 +281,47 @@ public class BillValidator implements AutoCloseable {
         return true;
     }
 
+    /**
+     * Starts the polling loop to continuously poll the acceptor for messages asynchronously.
+     * @return A {@link CompletableFuture} that completes with {@code true} if the polling loop was started; otherwise, {@code false}
+     */
     public CompletableFuture<Boolean> startPollingLoopAsync() {
         return CompletableFuture.supplyAsync(this::startPollingLoop, commandExecutor);
     }
 
+    /**
+     * Stops the RS-232 polling loop
+     */
     public synchronized void stopPollingLoop() {
         if (!_isPolling.get()) {
             _logger.LogDebug("The polling loop is not running, so ignoring the stop request.");
             return;
         }
 
-        _logger.LogDebug("Stopping the polling loop gracefully...");
+        _logger.LogDebug("Stopping the polling loop...");
 
-        // 1. Signal the polling loop to stop by setting the flag to false.
-        // The loop will complete its current iteration and exit.
+
         _isPolling.set(false);
 
         ExecutorService executor = pollingExecutor;
         if (executor != null) {
-            // 2. Shutdown the executor. This prevents new tasks but allows the running one to finish.
+
             executor.shutdown();
             try {
-                // 3. Wait for the polling loop to terminate cleanly.
+
                 boolean stopped = executor.awaitTermination(STOP_LOOP_TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS);
 
                 if (stopped) {
-                    _logger.LogDebug("Stopped the polling loop gracefully.");
+                    _logger.LogDebug("Stopped the polling loop.");
                 } else {
-                    // 4. If it doesn't stop in time, force it.
+
                     _logger.LogError("Polling loop did not terminate gracefully within the timeout. Forcing shutdown.");
                     executor.shutdownNow();
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 executor.shutdownNow();
-                _logger.LogError("Interrupted while waiting for the polling loop to stop. Forcing shutdown.", e);
+                _logger.LogError("Interrupted while waiting for the polling loop to stop. Forcing shutdown: %s", e.getMessage());
             } finally {
                 pollingExecutor = null;
             }
@@ -242,8 +329,10 @@ public class BillValidator implements AutoCloseable {
 
         // Clean up state after the loop has definitely stopped.
         failAllPendingMessages(new IllegalStateException("The polling loop has been stopped."));
+
         retryMessage = null;
         retryPoll = false;
+
         _shouldRequestBillStack = false;
         _shouldRequestBillReturn = false;
         _wasCashboxAttachmentReported = false;
@@ -251,11 +340,13 @@ public class BillValidator implements AutoCloseable {
         _wasEscrowedBillReported = false;
         _wasBarcodeDetectedReported = false;
         _wasConnectionLostReported = false;
-        IsConnectionPresent = false;
 
-        // The _isPolling flag is already false, so no need to set it again.
+        IsConnectionPresent = false;
     }
 
+    /**
+     * Stacks a bill in escrow.
+     */
     public void stackBill() {
         synchronized (this) {
             if (_state != Rs232State.Escrowed) {
@@ -266,6 +357,9 @@ public class BillValidator implements AutoCloseable {
         }
     }
 
+    /**
+     * Returns a bill in escrow.
+     */
     public void returnBill() {
         synchronized (this) {
             if (_state != Rs232State.Escrowed) {
@@ -276,6 +370,11 @@ public class BillValidator implements AutoCloseable {
         }
     }
 
+    /**
+     * Sends an instance of {@link Rs232RequestMessage}, which should not be an instance of
+     * {@link PollRequestMessage}, to the acceptor and returns an instance of {@link TResponseMessage}
+     * created from the response payload.
+     */
     public <TResponseMessage extends Rs232ResponseMessage> CompletableFuture<TResponseMessage> SendNonPollMessageAsync(
             Function<Boolean, Rs232RequestMessage> createRequestMessage,
             Function<List<Byte>, TResponseMessage> createResponseMessage){
@@ -335,6 +434,10 @@ public class BillValidator implements AutoCloseable {
         return pendingMessage.future;
     }
 
+    /**
+     * Enqueues a pending message to be sent to the acceptor.
+     * @param pendingMessage The pending message to enqueue
+     */
     private void enqueuePendingMessage(PendingMessage<?> pendingMessage){
         messageQueue.offer(pendingMessage);
 
@@ -343,6 +446,9 @@ public class BillValidator implements AutoCloseable {
         }
     }
 
+    /**
+     * Processes a pending message by sending it to the acceptor and handling the response.
+     */
     private <TResponse extends Rs232ResponseMessage>
     boolean processPendingMessage(
             PendingMessage<TResponse> pendingMessage
@@ -402,7 +508,7 @@ public class BillValidator implements AutoCloseable {
         }
     }
 
-    private <TResponseMessage extends Rs232ResponseMessage> boolean pendingMessage(PendingMessage<TResponseMessage> pendingMessage) {
+    /*private <TResponseMessage extends Rs232ResponseMessage> boolean pendingMessage(PendingMessage<TResponseMessage> pendingMessage) {
         if (pendingMessage.future.isDone() || pendingMessage.future.isCancelled()) {
             return true;
         }
@@ -435,7 +541,7 @@ public class BillValidator implements AutoCloseable {
             pendingMessage.future.completeExceptionally(throwable);
             return true;
         }
-    }
+    }*/
 
     private boolean processUnknownPendingMessage(PendingMessage<?> pendingMessage){
         return processPendingMessage((PendingMessage) pendingMessage);
@@ -445,11 +551,9 @@ public class BillValidator implements AutoCloseable {
             Function<Boolean, Rs232RequestMessage> createRequestMessage,
             Function<List<Byte>, TResponseMessage> createResponseMessage) {
 
-        _logger.LogTrace("Attempting to send: " + createRequestMessage.toString());
+
         Rs232RequestMessage requestMessage = createRequestMessage.apply(!_lastAck);
 
-        _logger.LogTrace("Created request message: " + requestMessage.toString());
-        _logger.LogTrace("Request message payload: " + ByteUtils.ConvertToHexString(requestMessage.getPayload(), true, false));
         byte[] requestPayload = ByteUtils.convertListToByteArray(requestMessage.getPayload());
 
         byte[] responsePayload = new byte[0];
@@ -460,10 +564,6 @@ public class BillValidator implements AutoCloseable {
             int writeStatus = Byte.toUnsignedInt(_serialProvider.Write(requestPayload.length, requestPayload));
 
             if(writeStatus != SERIAL_STATUS_SUCCESS){
-                _logger.LogError(
-                        "The serial provider returned write status {0}.",
-                        writeStatus
-                );
 
                 sleep(
                         readTimeoutMilliseconds
@@ -479,14 +579,12 @@ public class BillValidator implements AutoCloseable {
                     readTimeoutMilliseconds
             );
 
-            _logger.LogTrace("Attempting to read header");
+
             byte[] header = readFromProvider(2, readTimeoutMilliseconds);
 
             if(header.length == 2){
 
                 int totalMessageLength = Byte.toUnsignedInt(header[1]);
-
-                _logger.LogTrace("Header read successfully. Total message length: " + totalMessageLength);
 
                 int remainingByteCount = totalMessageLength - 2;
 
@@ -512,13 +610,9 @@ public class BillValidator implements AutoCloseable {
 
         TResponseMessage responseMessage = createResponseMessage.apply(responsePayloadList);
 
-        _logger.LogTrace(
-                "Sent message: " + ByteUtils.ConvertToHexString(ByteUtils.convertByteArrayToList(requestPayload), true, false)
-        );
+        _logger.LogTrace("Sent data to acceptor: %s", ByteUtils.ConvertToHexString(requestMessage.getPayload(), true, false));
 
-        _logger.LogTrace(
-                "Received message: " + ByteUtils.ConvertToHexString(responsePayloadList, true, false)
-        );
+        _logger.LogTrace("Received data from acceptor: %s", ByteUtils.ConvertToHexString(responseMessage.getPayload(), true, false));
 
         notifyCommunicationAttempted(requestMessage, responseMessage);
 
@@ -555,9 +649,7 @@ public class BillValidator implements AutoCloseable {
             long timeoutMilliseconds
     ) {
 
-        _logger.LogTrace("Attempting to read bytes: " + String.valueOf(requestedByteCount));
         if (requestedByteCount <= 0) {
-            _logger.LogTrace("Requested to read {0} bytes, so returning an empty array.", requestedByteCount);
             return new byte[0];
         }
 
@@ -602,10 +694,6 @@ public class BillValidator implements AutoCloseable {
 
             int actualCount =
                     actualNumBytes[0];
-            _logger.LogTrace(
-                    "Read {0} bytes from the serial provider.",
-                    actualCount
-            );
 
             if (actualCount < 0) {
                 actualCount = 0;
@@ -622,7 +710,6 @@ public class BillValidator implements AutoCloseable {
                         0,
                         actualCount
                 );
-                _logger.LogTrace("Wrote to the result buffer: " + ByteUtils.ConvertToHexString(ByteUtils.convertByteArrayToList(readBuffer), true, false));
                 continue;
             }
 
@@ -631,7 +718,7 @@ public class BillValidator implements AutoCloseable {
                     && readStatus != SERIAL_STATUS_NO_DATA) {
 
                 _logger.LogError(
-                        "The serial provider returned read status {0}.",
+                        "The serial provider returned read status %b.",
                         readStatus
                 );
             }
@@ -748,9 +835,9 @@ public class BillValidator implements AutoCloseable {
                 _state;
 
         _logger.LogDebug(
-                "The state changed from {0} to {1}.",
-                oldState,
-                newState
+                "The state changed from %s to %s.",
+                oldState.name(),
+                newState.name()
         );
 
         _state =
@@ -773,8 +860,8 @@ public class BillValidator implements AutoCloseable {
         }
 
         _logger.LogDebug(
-                "Received event(s): {0}.",
-                reportedEvent
+                "Received event(s): %s.",
+                reportedEvent.Flags()
         );
 
         notifyEventReported(
@@ -833,7 +920,7 @@ public class BillValidator implements AutoCloseable {
             );
         } else {
             _logger.LogDebug(
-                    "Stacked a bill of type {0}.",
+                    "Stacked a bill of type %d.",
                     billType
             );
         }
@@ -848,8 +935,7 @@ public class BillValidator implements AutoCloseable {
     ) {
         if (responseMessage.getState()
                 != Rs232State.Escrowed
-                || !_wasEscrowedBillReported) {
-
+                || _wasEscrowedBillReported) {
             return;
         }
 
@@ -864,7 +950,7 @@ public class BillValidator implements AutoCloseable {
             );
         } else {
             _logger.LogDebug(
-                    "Escrowed a bill of type {0}.",
+                    "Escrowed a bill of type %d.",
                     billType
             );
         }
@@ -935,7 +1021,7 @@ public class BillValidator implements AutoCloseable {
 
                 if (!_wasBarcodeDetectedReported) {
                     _logger.LogDebug(
-                            "Detected a barcode: {0}",
+                            "Detected a barcode: %s",
                             barcodeResponse.getBarcode()
                     );
 
@@ -950,8 +1036,8 @@ public class BillValidator implements AutoCloseable {
 
             default:
                 _logger.LogError(
-                        "Received an unknown extended command: {0}.",
-                        extendedResponse.getCommand()
+                        "Received an unknown extended command: %s.",
+                        extendedResponse.getCommand().name()
                 );
 
                 break;
@@ -1050,7 +1136,7 @@ public class BillValidator implements AutoCloseable {
             }
         } catch (Throwable throwable) {
             _logger.LogError(
-                    "Serial communication failed: {0}",
+                    "Serial communication failed: %s",
                     throwable.getMessage()
             );
 
@@ -1109,27 +1195,17 @@ public class BillValidator implements AutoCloseable {
             return;
         }
 
-        StringBuilder errorMessage =
-                new StringBuilder(
-                        "Received an invalid response for a "
-                );
+        StringBuilder errorMessage = new StringBuilder("Received an invalid response for a %s:");
 
-        errorMessage.append(
-                responseMessage
-                        .getClass()
-                        .getSimpleName()
-        );
-
-        errorMessage.append(":");
-
-        for (String issue : payloadIssues) {
-            errorMessage
-                    .append("\n\t")
-                    .append(issue);
+        Object[] errorArgs = new Object[payloadIssues.size() + 1];
+        errorArgs[0] = responseMessage.getClass().getSimpleName();
+        for (int i = 0; i < payloadIssues.size(); i++) {
+            errorMessage.append("\n\t{{%s}}");
+            errorArgs[i + 1] = payloadIssues.get(i);
         }
 
         _logger.LogError(
-                errorMessage.toString()
+                errorMessage.toString(), errorArgs
         );
     }
 
@@ -1165,10 +1241,8 @@ public class BillValidator implements AutoCloseable {
                         response
                 );
 
-        for (BillValidatorListener listener : listeners) {
-            listener.onCommunicationAttempted(
-                    eventArgs
-            );
+        if(OnCommunicationAttempted != null) {
+            OnCommunicationAttempted.invoke(eventArgs);
         }
     }
 
@@ -1182,68 +1256,58 @@ public class BillValidator implements AutoCloseable {
                         newState
                 );
 
-        for (BillValidatorListener listener : listeners) {
-            listener.onStateChanged(
-                    eventArgs
-            );
+        if(OnStateChanged != null) {
+            OnStateChanged.invoke(eventArgs);
         }
     }
 
     private void notifyEventReported(
             Rs232Event event
     ) {
-        for (BillValidatorListener listener : listeners) {
-            listener.onEventReported(
-                    event
-            );
+        if(OnEventReported != null) {
+            OnEventReported.invoke(event);
         }
     }
 
     private void notifyCashboxAttached() {
-        for (BillValidatorListener listener : listeners) {
-            listener.onCashboxAttached();
+        if(OnCashboxAttached != null) {
+            OnCashboxAttached.invoke();
         }
     }
 
     private void notifyCashboxRemoved() {
-        for (BillValidatorListener listener : listeners) {
-            listener.onCashboxRemoved();
+        if(OnCashboxRemoved != null) {
+            OnCashboxRemoved.invoke();
         }
     }
 
     private void notifyBillStacked(
             int billType
     ) {
-        for (BillValidatorListener listener : listeners) {
-            listener.onBillStacked(
-                    billType
-            );
+        if(OnBillStacked != null) {
+            OnBillStacked.invoke(billType);
         }
     }
 
     private void notifyBillEscrowed(
             int billType
     ) {
-        for (BillValidatorListener listener : listeners) {
-            listener.onBillEscrowed(
-                    billType
-            );
+        if(OnBillEscrowed != null) {
+            OnBillEscrowed.invoke(billType);
         }
     }
 
     private void notifyBarcodeDetected(
             String barcode
     ) {
-        for (BillValidatorListener listener : listeners) {
-            listener.onBarcodeDetected(
-                    barcode
-            );
+        if(OnBarcodeDetected != null) {
+            OnBarcodeDetected.invoke(barcode);
         }
     }
 
     private void notifyConnectionLost() {
-        for (BillValidatorListener listener : listeners) {
-            listener.onConnectionLost();
+        if(OnConnectionLost != null) {
+            OnConnectionLost.invoke();
         }
     }
 
@@ -1459,7 +1523,6 @@ public class BillValidator implements AutoCloseable {
     private <TResponseMessage extends TelemetryResponseMessage> CompletableFuture<TResponseMessage> SendTelemetryMessageAsync(TelemetryCommand command,
                                                                                                                              List<Byte> requestData,
                                                                                                                              Function<List<Byte>, TResponseMessage> createResponseMessage) {
-        _logger.LogTrace("Sending telemetry message: " + command.name() + command.getValue());
         return SendNonPollMessageAsync(ack -> new TelemetryRequestMessage(ack, command, requestData), createResponseMessage);
     }
 

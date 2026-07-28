@@ -2,21 +2,29 @@ package PTI.Rs232Validator.EventListener;
 
 import PTI.Rs232Validator.Rs232State;
 
+/**
+ * Event arguments for the State Changed Event event
+ */
 public class StateChangedEventArgs {
 
+    /**
+     * Initializes a new instance of {@link StateChangedEventArgs}
+     * @param oldState {@link StateChangedEventArgs#OldState}
+     * @param newState {@link StateChangedEventArgs#NewState}
+     */
     public StateChangedEventArgs(Rs232State oldState, Rs232State newState) {
-        this.oldState = oldState;
-        this.newState = newState;
+        this.OldState = oldState;
+        this.NewState = newState;
     }
 
-    private Rs232State oldState;
-    public Rs232State getOldState() {
-        return oldState;
-    }
+    /**
+     * The previous state of the device
+     */
+    public final Rs232State OldState;
 
 
-    private Rs232State newState;
-    public Rs232State getNewState() {
-        return newState;
-    }
+    /**
+     * The new state of the device
+     */
+    public final Rs232State NewState;
 }

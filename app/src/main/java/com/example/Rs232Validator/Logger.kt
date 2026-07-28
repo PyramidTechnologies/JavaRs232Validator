@@ -13,11 +13,13 @@ class Logger : ILogger {
     private val TimestampFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("MM-dd-yyyy hh:mm:ss a")
 
     override fun LogTrace(format: String, vararg args: Any?) {
-        Log(LogLevel.Trace, format, *args)
+        // Do nothing
+        //Log(LogLevel.Trace, format, *args)
     }
 
     override fun LogDebug(format: String, vararg args: Any?) {
-        Log(LogLevel.Debug, format, *args)
+        // Do nothing
+        //Log(LogLevel.Debug, format, *args)
     }
 
     override fun LogInfo(format: String, vararg args: Any?) {

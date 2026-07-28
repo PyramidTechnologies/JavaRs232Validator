@@ -104,7 +104,7 @@ public class PollRequestMessage extends Rs232RequestMessage{
      */
     public PollRequestMessage SetBarcodeDetectionRequested(boolean isBarcodeDetectionRequested){
         IsBarcodeDetectionRequested = isBarcodeDetectionRequested;
-        MutatePayload((byte) 4, isBarcodeDetectionRequested ? ByteUtils.SetBit(getPayload().get(5), (byte) 1) : ByteUtils.ClearBit(getPayload().get(5), (byte) 1));
+        MutatePayload((byte) 5, isBarcodeDetectionRequested ? ByteUtils.SetBit(getPayload().get(5), (byte) 1) : ByteUtils.ClearBit(getPayload().get(5), (byte) 1));
         return this;
     }
 

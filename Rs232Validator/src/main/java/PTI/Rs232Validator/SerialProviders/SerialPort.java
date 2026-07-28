@@ -248,10 +248,7 @@ public class SerialPort extends Activity
 			return status;
 		}
 
-		/*
-		 * FTDI Chip can only handle 256 bytes of data at a time, so if the data is more than 256 bytes, we need to send it in multiple packets
-		 * and add some delay between the packets to avoid overwhelming the chip
-		 */
+
 		if(numBytes > 256) {
 			int packets = (numBytes / 256) + 1;
 
@@ -330,6 +327,37 @@ public class SerialPort extends Activity
 		return status;
 	}
 
+	public byte FlushReadBuffer(){
+		status = 0x00; /*success by default*/
+		int numBytes = totalBytes;
+		int[] actualNumBytes = new int[1];
+		byte[] buffer = new byte[1024];
+
+		/*should be at least one byte to read*/
+		if((numBytes < 1) || (totalBytes == 0)){
+			actualNumBytes[0] = 0;
+			status = 0x01;
+			return status;
+		}
+
+		/*update the number of bytes available*/
+		totalBytes -= numBytes;
+
+		actualNumBytes[0] = numBytes;
+
+		/*copy to the user buffer*/
+		for(int count = 0; count<numBytes;count++)
+		{
+			buffer[count] = readBuffer[readIndex];
+			readIndex++;
+			/*shouldnt read more than what is there in the buffer,
+			 * 	so no need to check the overflow
+			 */
+			readIndex %= maxnumbytes;
+		}
+		return status;
+	}
+
 	/**
 	 * Sends a packet of data to the USB accessory through the FT311 chip
 	 * @param numBytes The number of bytes to send from the writeusbdata buffer
@@ -372,7 +400,7 @@ public class SerialPort extends Activity
 
 		UsbAccessory accessory = (accessories == null ? null : accessories[0]);
 		if (accessory != null) {
-			/*if(!accessory.toString().contains(ManufacturerString))
+			if(!accessory.toString().contains(ManufacturerString))
 			{
 				Toast.makeText(global_context, "Manufacturer is not matched!", Toast.LENGTH_SHORT).show();
 				return 1;
@@ -390,7 +418,7 @@ public class SerialPort extends Activity
 				return 1;
 			}
 
-			Toast.makeText(global_context, "Manufacturer, Model & Version are matched!", Toast.LENGTH_SHORT).show();*/
+			//Toast.makeText(global_context, "Manufacturer, Model & Version are matched!", Toast.LENGTH_SHORT).show();
 			accessory_attached = true;
 
 			if (usbmanager.hasPermission(accessory)) {

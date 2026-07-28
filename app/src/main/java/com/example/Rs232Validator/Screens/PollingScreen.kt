@@ -3,6 +3,7 @@ package com.example.Rs232Validator.Screens
 import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -27,8 +28,7 @@ fun PollingScreen(viewModel: ValidatorViewModel){
         modifier = Modifier
             .fillMaxSize()
             .background(color = Color(0xFFFFFFFF))
-            .padding(start = 10.dp, top = 10.dp, end = 10.dp, bottom = 10.dp)
-            .verticalScroll(rememberScrollState()),
+            .padding(start = 10.dp, top = 10.dp, end = 10.dp, bottom = 10.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp, Alignment.Top),
         horizontalAlignment = Alignment.CenterHorizontally,
     ){
@@ -38,7 +38,7 @@ fun PollingScreen(viewModel: ValidatorViewModel){
             contentPadding = PaddingValues(2.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 300.dp),
+                .heightIn(max = 160.dp),
             userScrollEnabled = false
         ) {
             val numbers = mutableStateListOf<Int>()
@@ -53,7 +53,23 @@ fun PollingScreen(viewModel: ValidatorViewModel){
 
         HorizontalDivider(thickness = 1.dp, color = Constants.NeutralStrokeDisabledRest)
 
-        ControlSection(viewModel)
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ){
+            Box(modifier = Modifier.weight(1f)) {
+                ControlSection(viewModel)
+            }
+
+            //HorizontalDivider(thickness = 1.dp, color = Constants.NeutralStrokeDisabledRest)
+
+            Box(modifier = Modifier.weight(1f)) {
+                StatesScreen(viewModel)
+            }
+        }
+
+
+
     }
 }
 
@@ -61,7 +77,7 @@ fun PollingScreen(viewModel: ValidatorViewModel){
 fun BillValueRow(billType : Int, viewModel: ValidatorViewModel) {
     Row (
         modifier = Modifier
-            .height(72.dp)
+            .height(40.dp)
             .padding(start = 10.dp, end = 10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically
@@ -166,7 +182,7 @@ fun BillValueComponent(billType: Int, viewModel: ValidatorViewModel){
 }
 
 @Composable
-fun ControlSection(viewModel: ValidatorViewModel){
+fun ControlSection(viewModel: ValidatorViewModel) {
     val escrow_mode by remember {
         derivedStateOf { viewModel.escrow_mode }
     }
@@ -181,31 +197,23 @@ fun ControlSection(viewModel: ValidatorViewModel){
 
     val IsBillInEscrow by viewModel.IsBillInEscrow.collectAsState()
 
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(200.dp),
-        contentPadding = PaddingValues(0.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .fillMaxHeight()
-            .heightIn(max = 350.dp),
-        userScrollEnabled = false
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceEvenly
     ) {
-        item {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceAround
+        ) {
             Button(
                 onClick = {
                     viewModel.OnPollingClicked()
                 },
                 modifier = Modifier
-                    .width(130.dp)
-                    .height(91.75.dp)
-                    .padding(start = 12.dp, top = 5.dp, end = 12.dp, bottom = 5.dp),
+                    .width(130.dp),
                 enabled = true,
-                contentPadding = PaddingValues(
-                    start = 12.dp,
-                    top = 30.dp,
-                    bottom = 30.dp,
-                    end = 12.dp
-                ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
                 interactionSource = remember { MutableInteractionSource() },
                 colors = ButtonColors(
                     containerColor = Color(0xFF0F6CBD),
@@ -216,7 +224,7 @@ fun ControlSection(viewModel: ValidatorViewModel){
                 shape = RoundedCornerShape(size = Constants.Medium)
             ) {
                 Text(
-                    text = if(isPolling.value) "Stop Polling" else "Start Polling",
+                    text = if (isPolling.value) "Stop Polling" else "Start Polling",
                     style = TextStyle(
                         fontSize = 14.sp,
                         lineHeight = 20.sp,
@@ -224,24 +232,15 @@ fun ControlSection(viewModel: ValidatorViewModel){
                     )
                 )
             }
-        }
 
-        item {
             Button(
                 onClick = {
                     viewModel.OnStackClicked()
                 },
                 modifier = Modifier
-                    .width(130.dp)
-                    .height(91.75.dp)
-                    .padding(start = 12.dp, top = 5.dp, end = 12.dp, bottom = 5.dp),
+                    .width(130.dp),
                 enabled = IsBillInEscrow,
-                contentPadding = PaddingValues(
-                    start = 12.dp,
-                    top = 30.dp,
-                    bottom = 30.dp,
-                    end = 12.dp
-                ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
                 interactionSource = remember { MutableInteractionSource() },
                 colors = ButtonColors(
                     containerColor = Color(0xFF48C748),
@@ -260,24 +259,15 @@ fun ControlSection(viewModel: ValidatorViewModel){
                     )
                 )
             }
-        }
 
-        item {
             Button(
                 onClick = {
                     viewModel.OnReturnClicked()
                 },
                 modifier = Modifier
-                    .width(130.dp)
-                    .height(91.75.dp)
-                    .padding(start = 12.dp, top = 5.dp, end = 12.dp, bottom = 5.dp),
+                    .width(130.dp),
                 enabled = IsBillInEscrow,
-                contentPadding = PaddingValues(
-                    start = 12.dp,
-                    top = 30.dp,
-                    bottom = 30.dp,
-                    end = 12.dp
-                ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
                 interactionSource = remember { MutableInteractionSource() },
                 colors = ButtonColors(
                     containerColor = Color(0xFFDA4A4A),
@@ -298,94 +288,69 @@ fun ControlSection(viewModel: ValidatorViewModel){
             }
         }
 
-        item {
-            LazyHorizontalGrid(
-                rows = GridCells.Adaptive(40.75.dp),
-                contentPadding = PaddingValues(0.dp),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 300.dp),
-                userScrollEnabled = false
+                    .clickable {
+                        viewModel.toggleEscrow()
+                    },
             ) {
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(111.75.dp)
-                            .padding(start = 10.dp, top = 10.dp, end = 10.dp, bottom = 10.dp)
-                            .clickable {
-                                viewModel.toggleEscrow()
-                            },
-                        horizontalArrangement = Arrangement.spacedBy(
-                            10.dp,
-                            Alignment.CenterHorizontally
-                        ),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Checkbox(
-                            checked = escrow_mode.value,
-                            onCheckedChange = {
-                                viewModel.toggleEscrow()
-                            },
-                            enabled = true,
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = Color.Blue,
-                                uncheckedColor = Color.DarkGray,
-                                checkmarkColor = Color.White
-                            ),
-                            interactionSource = remember { MutableInteractionSource() }
-                        )
+                Checkbox(
+                    checked = escrow_mode.value,
+                    onCheckedChange = {
+                        viewModel.toggleEscrow()
+                    },
+                    enabled = true,
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = Color.Blue,
+                        uncheckedColor = Color.DarkGray,
+                        checkmarkColor = Color.White
+                    ),
+                    interactionSource = remember { MutableInteractionSource() }
+                )
 
-                        Text(
-                            text = "Escrow Mode",
-                            style = TextStyle(
-                                fontSize = 14.sp,
-                                lineHeight = 20.sp,
-                                fontWeight = FontWeight(400)
-                            )
-                        )
-                    }
-                }
+                Text(
+                    text = "Escrow Mode",
+                    style = TextStyle(
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight(400)
+                    )
+                )
+            }
 
-                item {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(111.75.dp)
-                            .padding(start = 10.dp, top = 10.dp, end = 10.dp, bottom = 10.dp)
-                            .clickable {
-                                viewModel.toggleBarcodeDetection()
-                            },
-                        horizontalArrangement = Arrangement.spacedBy(
-                            10.dp,
-                            Alignment.CenterHorizontally
-                        ),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Checkbox(
-                            checked = detect_barcodes.value,
-                            onCheckedChange = {
-                                viewModel.toggleBarcodeDetection()
-                            },
-                            enabled = true,
-                            colors = CheckboxDefaults.colors(
-                                checkedColor = Color.Blue,
-                                uncheckedColor = Color.DarkGray,
-                                checkmarkColor = Color.White
-                            ),
-                            interactionSource = remember { MutableInteractionSource() }
-                        )
+            Row(
+                modifier = Modifier
+                    .clickable {
+                        viewModel.toggleBarcodeDetection()
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(
+                    checked = detect_barcodes.value,
+                    onCheckedChange = {
+                        viewModel.toggleBarcodeDetection()
+                    },
+                    enabled = true,
+                    colors = CheckboxDefaults.colors(
+                        checkedColor = Color.Blue,
+                        uncheckedColor = Color.DarkGray,
+                        checkmarkColor = Color.White
+                    ),
+                    interactionSource = remember { MutableInteractionSource() }
+                )
 
-                        Text(
-                            text = "Barcode Detection",
-                            style = TextStyle(
-                                fontSize = 14.sp,
-                                lineHeight = 20.sp,
-                                fontWeight = FontWeight(400)
-                            )
-                        )
-                    }
-                }
+                Text(
+                    text = "Barcode Detection",
+                    style = TextStyle(
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight(400)
+                    )
+                )
             }
         }
     }

@@ -29,7 +29,7 @@ public abstract class Rs232Message {
     /**
      * The byte collection representing this instance.
      */
-    protected List<Byte> Payload;
+    public List<Byte> Payload;
 
     /**
      * The ACK number

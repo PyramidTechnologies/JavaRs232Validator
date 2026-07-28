@@ -42,7 +42,7 @@ public class ValidatorEvent {
      * Invokes the actions of the listeners
      * @param args Parameters to be passed to the listeners
      */
-    public void Invoke(Object... args) {
+    public void invoke(Object... args) {
         for (Action a : listeners) {
             a.accept(args);
         }

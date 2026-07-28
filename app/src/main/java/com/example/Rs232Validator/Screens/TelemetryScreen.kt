@@ -35,7 +35,7 @@ fun TelemetryScreen(viewModel: ValidatorViewModel){
 
 @Composable
 fun TelemetryControls(viewModel: ValidatorViewModel){
-    var selectedOption by remember { mutableStateOf("") }
+    val selectedOption by viewModel.correctableComponent.collectAsState()
 
     val telemetryResponses by remember {
         derivedStateOf {  viewModel.telemetryResponses }
@@ -76,7 +76,9 @@ fun TelemetryControls(viewModel: ValidatorViewModel){
             label = "Correctable Component",
             options = listOf("Tach Sensor", "Bill Path", "Cashbox Belt", "Cashbox Mechanism", "MAS", "Spring Rollers", "All"),
             selectedOption = selectedOption,
-            onOptionSelected = { selectedOption = it }
+            onOptionSelected = { newSelection ->
+                viewModel.onCorrectableComponentChanged(newSelection)
+            }
         )
         TelemetryControl("Get\nService Info", telemetryResponses[8]) {
             viewModel.GetServiceInfo()
@@ -86,6 +88,7 @@ fun TelemetryControls(viewModel: ValidatorViewModel){
         }
     }
 }
+
 
 @Composable
 fun TelemetryControl(name: String, response: String, onClick: () -> Unit){
