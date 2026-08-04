@@ -407,11 +407,11 @@ public class BillValidator implements AutoCloseable {
                         return;
                     }
 
-                    /*if (!checkForDevice()) {
+                    if (!checkForDevice()) {
                         TResponseMessage emptyResponse = createResponseMessage.apply(new ArrayList<>());
                         pendingMessage.future.complete(emptyResponse);
                         return;
-                    }*/
+                    }
 
                     while (!pendingMessage.future.isDone() && !Thread.currentThread().isInterrupted()) {
                         boolean finished = processPendingMessage(pendingMessage);
@@ -507,41 +507,6 @@ public class BillValidator implements AutoCloseable {
             return true;
         }
     }
-
-    /*private <TResponseMessage extends Rs232ResponseMessage> boolean pendingMessage(PendingMessage<TResponseMessage> pendingMessage) {
-        if (pendingMessage.future.isDone() || pendingMessage.future.isCancelled()) {
-            return true;
-        }
-
-        try{
-            MessageResult<TResponseMessage> messageResult = trySendMessage(pendingMessage.requestFactory, pendingMessage.responseFactory);
-
-            switch (messageResult.result) {
-                case IncorrectAck:
-                    return false;
-
-                case IncorrectPayload:
-                    int incorrectPayloadCount = pendingMessage.incorrectPayloadCount.incrementAndGet();
-                    if(incorrectPayloadCount <= MaxIncorrectPayloadPardons){
-                        return false;
-                    }
-
-                    logPayloadIssues(messageResult.response);
-                    break;
-
-                case Success:
-                case Timeout:
-                    break;
-            }
-
-            pendingMessage.future.complete(messageResult.response);
-
-            return true;
-        } catch (Throwable throwable){
-            pendingMessage.future.completeExceptionally(throwable);
-            return true;
-        }
-    }*/
 
     private boolean processUnknownPendingMessage(PendingMessage<?> pendingMessage){
         return processPendingMessage((PendingMessage) pendingMessage);

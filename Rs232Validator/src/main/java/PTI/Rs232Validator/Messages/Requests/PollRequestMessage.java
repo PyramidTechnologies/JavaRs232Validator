@@ -50,7 +50,7 @@ public class PollRequestMessage extends Rs232RequestMessage{
      * @return This instance
      * @implNote
      * 0b00000001: only accept the 1st bill type (e.g. $1).<br>
-     * 0b00000010: only accept the 1st bill type (e.g. $2).<br>
+     * 0b00000010: only accept the 2nd bill type (e.g. $2).<br>
      * 0b00000100: only accept the 3rd bill type (e.g. $5).<br>
      * 0b00001000: only accept the 4th bill type (e.g. $10).<br>
      * 0b00010000: only accept the 5th bill type (e.g. $20).<br>

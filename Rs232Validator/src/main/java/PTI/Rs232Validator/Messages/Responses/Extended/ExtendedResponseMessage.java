@@ -64,7 +64,7 @@ public class ExtendedResponseMessage extends PollResponseMessage {
     /**
      * The data
      */
-    protected List<Byte> Data = new ArrayList<Byte>();
+    public List<Byte> Data = new ArrayList<Byte>();
 
     /**
      * Returns {@link #Data}

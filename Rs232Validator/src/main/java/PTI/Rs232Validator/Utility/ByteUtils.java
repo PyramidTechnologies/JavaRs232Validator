@@ -155,7 +155,11 @@ public class ByteUtils {
         return hexString.toString();
     }
 
-
+    /**
+     * Converts a byte array to a list of bytes
+     * @param bytes The byte array to convert
+     * @return A list of bytes
+     */
     public static List<Byte> convertByteArrayToList(byte[] bytes){
         List<Byte> list = new ArrayList<>();
         for (byte b : bytes) {
@@ -164,6 +168,11 @@ public class ByteUtils {
         return list;
     }
 
+    /**
+     * Converts a list of bytes to a byte array
+     * @param list The list of bytes to convert
+     * @return A byte array
+     */
     public static byte[] convertListToByteArray(List<Byte> list){
         byte[] bytes = new byte[list.size()];
         int i = 0;
@@ -175,6 +184,12 @@ public class ByteUtils {
         return bytes;
     }
 
+    /**
+     * Concatenates two byte arrays into a single byte array
+     * @param first
+     * @param second
+     * @return
+     */
     public static byte[] concatArrays(byte[] first, byte[] second) {
         byte[] result = new byte[first.length + second.length];
         System.arraycopy(first, 0, result, 0, first.length);

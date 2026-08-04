@@ -18,7 +18,7 @@ import PTI.Rs232Validator.Loggers.NullLogger;
 
 
 /**
- * An implementation of {@link ISerialProvider} that connects to the FTDI Chip
+ * A serial port implementation that connects to the FTDI Chip
  */
 public class SerialPort extends Activity
 {
