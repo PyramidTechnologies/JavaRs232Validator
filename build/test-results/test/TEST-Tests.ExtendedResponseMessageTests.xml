@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="Tests.ExtendedResponseMessageTests" tests="2" skipped="0" failures="0" errors="0" timestamp="2025-09-10T14:28:56.548Z" hostname="ASSET-511" time="0.028">
-  <properties/>
-  <testcase name="ExtendedResponseMessage_DeserializesCommandAndStatusAndData()" classname="Tests.ExtendedResponseMessageTests" time="0.025"/>
-  <testcase name="BarcodeDetectedResponseMessage_DeserializesBarcode()" classname="Tests.ExtendedResponseMessageTests" time="0.002"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>
